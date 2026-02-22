@@ -107,7 +107,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             headers=headers,
         )
 
-        is_stream = _should_stream_proxy(path, headers, method)
+        is_stream = _should_stream_proxy(path, headers)
 
         try:
             timeout = (
@@ -129,13 +129,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.send_header(key, value)
                     self.end_headers()
                     while True:
-                        # read1() returns immediately with available data
-                        # instead of blocking until 8192 bytes accumulate.
-                        # Critical for SSE and long-lived streaming responses.
-                        try:
-                            chunk = response.read1(8192)
-                        except AttributeError:
-                            chunk = response.read(8192)
+                        chunk = response.read(8192)
                         if not chunk:
                             break
                         self.wfile.write(chunk)
@@ -183,17 +177,11 @@ def _is_session_message_path(path: str) -> bool:
     return len(parts) == 3 and parts[0] == "session" and parts[2] == "message"
 
 
-def _should_stream_proxy(path: str, headers: dict[str, str], method: str = "GET") -> bool:
+def _should_stream_proxy(path: str, headers: dict[str, str]) -> bool:
     if path == "/event":
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
-    if "text/event-stream" in accept.lower():
-        return True
-    # Message POST blocks until LLM completes (60-120s+).
-    # Stream-proxy it to avoid the 15s request timeout and deliver bytes incrementally.
-    if method.upper() == "POST" and _is_session_message_path(path):
-        return True
-    return False
+    return "text/event-stream" in accept.lower()
 
 
 def _session_id_from_path(path: str) -> str | None:

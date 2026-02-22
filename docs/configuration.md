@@ -33,6 +33,11 @@ Environment variables:
 - `ROUTER_GATEWAY_TOP_K` (default: `20`)
 - `ROUTER_GATEWAY_BUDGET_TOKENS` (default: `1500`)
 
+Autostart behavior:
+
+- When OpenCode starts the router MCP process, gateway autostart is enabled by default.
+- Disable with `ROUTER_GATEWAY_AUTOSTART=false`.
+
 ## Auto-configure Options
 
 ```bash

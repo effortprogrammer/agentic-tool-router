@@ -19,6 +19,9 @@ export interface ToolCard {
   toolId: string; // "{serverId}:{toolName}"
   toolName: string;
   serverId: string;
+  sourceType?: "mcp" | "host";
+  sourcePlatform?: string;
+  providerId?: string;
 
   title?: string;
   description?: string;

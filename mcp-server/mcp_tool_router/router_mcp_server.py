@@ -406,14 +406,18 @@ class _ConfigWatcher(threading.Thread):
             return None
 
     def _reload(self) -> None:
-        registry = ToolRouterHub.from_opencode_config(  # type: ignore[arg-type]
-            self._config_path,
-            routerd_path=self._routerd_cmd,
-            auto_sync=True,
-            include_disabled=self._include_disabled,
-            ignore_ids=self._ignore_ids,
-        ).registry
-        self._hub.reload_registry(registry)
+        registry, host_tools, host_tool_definitions = (
+            ToolRouterHub.load_opencode_runtime(  # type: ignore[arg-type]
+                self._config_path,
+                include_disabled=self._include_disabled,
+                ignore_ids=self._ignore_ids,
+            )
+        )
+        self._hub.reload_registry(
+            registry,
+            host_tools=host_tools,
+            host_tool_definitions=host_tool_definitions,
+        )
 
 
 def main() -> int:

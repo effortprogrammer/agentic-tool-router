@@ -192,9 +192,6 @@ function installTarget(target: InstallTarget, args: string[]): void {
   if (profile.postWriteHook) {
     profile.postWriteHook(configPath, options.createBackup);
   }
-  if (target === "opencode") {
-    removeRouterFromOpencodeOverlayConfigs(routerId, options.createBackup);
-  }
   if (profile.postInstallHook) {
     profile.postInstallHook(options.createBackup, gatewayResolved);
   }
@@ -468,49 +465,6 @@ function ensureOpencodeGatewayShim(
   console.log(
     `[mcpflow] Installed automatic OpenCode gateway launcher at ${opencodePath}.`,
   );
-}
-
-function removeRouterFromOpencodeOverlayConfigs(
-  routerId: string,
-  createBackup: boolean,
-): void {
-  const home = os.homedir();
-  const candidates = [
-    path.join(home, ".opencode", "opencode.json"),
-    path.join(home, ".config", "opencode", "opencode.json"),
-  ];
-  for (const filePath of candidates) {
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
-    try {
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        Array.isArray(parsed)
-      ) {
-        continue;
-      }
-      const mcp = (parsed as JsonObject).mcp;
-      if (
-        typeof mcp !== "object" ||
-        mcp === null ||
-        Array.isArray(mcp) ||
-        !(routerId in (mcp as JsonObject))
-      ) {
-        continue;
-      }
-      delete (mcp as JsonObject)[routerId];
-      if (createBackup) {
-        fs.copyFileSync(filePath, `${filePath}.bak`);
-      }
-      fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2));
-    } catch {
-      continue;
-    }
-  }
 }
 
 function safeReadText(filePath: string): string | null {

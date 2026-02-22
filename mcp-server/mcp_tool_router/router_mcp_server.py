@@ -17,6 +17,14 @@ SERVER_VERSION = "0.1.0"
 DEFAULT_TOP_K = 20
 DEFAULT_BUDGET_TOKENS = 1500
 
+SELECT_TOOLS_NAME = "select_tools"
+CALL_TOOL_NAME = "call_tool"
+TOOL_INFO_NAME = "tool_info"
+
+LEGACY_SELECT_TOOLS_NAME = "router_select_tools"
+LEGACY_CALL_TOOL_NAME = "router_call_tool"
+LEGACY_TOOL_INFO_NAME = "router_tool_info"
+
 
 class RpcError(Exception):
     def __init__(self, code: int, message: str) -> None:
@@ -35,7 +43,7 @@ class RouterMcpServer:
         self._default_session = default_session
         self._tools = [
             {
-                "name": "router_select_tools",
+                "name": SELECT_TOOLS_NAME,
                 "description": (
                     "Select the most relevant MCP tools for a query. "
                     "Returns tool IDs and (optionally) tool definitions."
@@ -73,7 +81,7 @@ class RouterMcpServer:
                 },
             },
             {
-                "name": "router_call_tool",
+                "name": CALL_TOOL_NAME,
                 "description": "Call a selected MCP tool by toolId.",
                 "inputSchema": {
                     "type": "object",
@@ -99,7 +107,7 @@ class RouterMcpServer:
                 },
             },
             {
-                "name": "router_tool_info",
+                "name": TOOL_INFO_NAME,
                 "description": (
                     "Get detailed information about a specific tool including its full JSON schema. "
                     "Use this to inspect a tool's parameters before calling it."
@@ -176,11 +184,11 @@ class RouterMcpServer:
     def _handle_tools_call(self, params: dict[str, Any]) -> Any:
         name = params.get("name")
         arguments = params.get("arguments") or {}
-        if name == "router_select_tools":
+        if name in {SELECT_TOOLS_NAME, LEGACY_SELECT_TOOLS_NAME}:
             payload = self._select_tools(arguments)
-        elif name == "router_call_tool":
+        elif name in {CALL_TOOL_NAME, LEGACY_CALL_TOOL_NAME}:
             payload = self._call_tool(arguments)
-        elif name == "router_tool_info":
+        elif name in {TOOL_INFO_NAME, LEGACY_TOOL_INFO_NAME}:
             payload = self._tool_info(arguments)
         else:
             raise RpcError(-32601, f"Unknown tool '{name}'.")
@@ -189,7 +197,10 @@ class RouterMcpServer:
     def _select_tools(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = str(arguments.get("query") or "").strip()
         if not query:
-            raise RpcError(-32602, "router_select_tools requires 'query'.")
+            raise RpcError(
+                -32602,
+                f"{SELECT_TOOLS_NAME} requires 'query'.",
+            )
         session_id = str(arguments.get("sessionId") or self._default_session)
         top_k = _coerce_int(arguments.get("topK"), DEFAULT_TOP_K)
         budget_tokens = _coerce_int(
@@ -200,13 +211,17 @@ class RouterMcpServer:
         if mode not in ("bm25", "regex", None):
             mode = None
 
-        tool_ids = self._hub.select_tools(
-            session_id,
-            query,
-            top_k=top_k,
-            budget_tokens=budget_tokens,
-            mode=mode,
-        )
+        try:
+            tool_ids = self._hub.select_tools(
+                session_id,
+                query,
+                top_k=top_k,
+                budget_tokens=budget_tokens,
+                sync=False,
+                mode=mode,
+            )
+        except Exception as exc:
+            raise RpcError(-32000, _format_tool_error(exc, operation="select_tools"))
         result: dict[str, Any] = {"selectedToolIds": tool_ids}
         if include_tools:
             result["tools"] = self._format_tools(tool_ids)
@@ -215,9 +230,18 @@ class RouterMcpServer:
     def _call_tool(self, arguments: dict[str, Any]) -> dict[str, Any]:
         tool_id = str(arguments.get("toolId") or arguments.get("tool_id") or "").strip()
         if not tool_id:
-            raise RpcError(-32602, "router_call_tool requires 'toolId'.")
+            raise RpcError(
+                -32602,
+                f"{CALL_TOOL_NAME} requires 'toolId'.",
+            )
         payload = arguments.get("arguments") or {}
-        result = self._hub.call_tool(tool_id, payload)
+        try:
+            result = self._hub.call_tool(tool_id, payload)
+        except Exception as exc:
+            raise RpcError(
+                -32000,
+                _format_tool_error(exc, tool_id=tool_id, operation="call_tool"),
+            )
 
         session_id = arguments.get("sessionId") or self._default_session
         if session_id:
@@ -231,7 +255,10 @@ class RouterMcpServer:
     def _tool_info(self, arguments: dict[str, Any]) -> dict[str, Any]:
         tool_id = str(arguments.get("toolId") or arguments.get("tool_id") or "").strip()
         if not tool_id:
-            raise RpcError(-32602, "router_tool_info requires 'toolId'.")
+            raise RpcError(
+                -32602,
+                f"{TOOL_INFO_NAME} requires 'toolId'.",
+            )
         router = self._hub.router
         card = router.get_tool_card(tool_id)
         raw = router.get_raw_tool(tool_id)
@@ -327,6 +354,37 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
+def _format_tool_error(
+    exc: Exception,
+    *,
+    operation: str,
+    tool_id: str | None = None,
+) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    source = _classify_error_source(message)
+    detail = f"source={source}; operation={operation}"
+    if tool_id:
+        detail = f"{detail}; toolId={tool_id}"
+    return f"[{detail}] {message}"
+
+
+def _classify_error_source(message: str) -> str:
+    lower = message.lower()
+    if "failed opencode request" in lower or "opencode response" in lower:
+        return "opencode-native"
+    if "host tool 'opencode-native:" in lower:
+        return "opencode-native"
+    if "mcp server did not respond" in lower or "mcp server closed" in lower:
+        return "mcp-server"
+    if "http timeout connecting" in lower or "http error connecting" in lower:
+        return "mcp-server"
+    if "routerd did not respond" in lower or "json-rpc client is closed" in lower:
+        return "router-core"
+    if "json-rpc error" in lower:
+        return "mcp-server"
+    return "unknown"
+
+
 def _default_routerd_cmd() -> str:
     env = os.environ.get("ROUTERD")
     if env:
@@ -357,10 +415,14 @@ def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
     hub = ToolRouterHub.from_opencode_config(
         config_path,
         routerd_path=routerd_cmd,
-        auto_sync=True,
+        auto_sync=False,
         include_disabled=include_disabled,
         ignore_ids=sorted(ignore_ids),
     )
+    try:
+        hub.sync_all()
+    except Exception:
+        pass
     return hub, config_path, include_disabled, sorted(ignore_ids), routerd_cmd
 
 
@@ -406,14 +468,18 @@ class _ConfigWatcher(threading.Thread):
             return None
 
     def _reload(self) -> None:
-        registry = ToolRouterHub.from_opencode_config(  # type: ignore[arg-type]
-            self._config_path,
-            routerd_path=self._routerd_cmd,
-            auto_sync=True,
-            include_disabled=self._include_disabled,
-            ignore_ids=self._ignore_ids,
-        ).registry
-        self._hub.reload_registry(registry)
+        registry, host_tools, host_tool_definitions = (
+            ToolRouterHub.load_opencode_runtime(  # type: ignore[arg-type]
+                self._config_path,
+                include_disabled=self._include_disabled,
+                ignore_ids=self._ignore_ids,
+            )
+        )
+        self._hub.reload_registry(
+            registry,
+            host_tools=host_tools,
+            host_tool_definitions=host_tool_definitions,
+        )
 
 
 def main() -> int:

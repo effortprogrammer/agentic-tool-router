@@ -1,54 +1,52 @@
 # Configuration Guide
 
-## Adding New MCP Servers
+OpenCode native auto-ingest is the primary path.
+
+## OpenCode Native Auto-Ingest (Primary)
+
+Router can auto-discover OpenCode runtime tools via OpenCode experimental
+endpoints and register them into the catalog as `opencode-native:*`.
+
+Compatibility notes:
+
+- Endpoints used: `/experimental/tool/ids`, `/experimental/tool`, `/session/{id}/message`
+- Tested with OpenCode `1.2.10`
+- OpenCode does not publish a hard minimum version guarantee for these
+  experimental endpoints
+
+## Gateway Mode (Built-ins + MCP Reduction)
+
+To reduce both OpenCode built-in tools and MCP tools per message, run the
+OpenCode gateway and point your OpenCode server URL to the gateway.
 
 ```bash
-# 1. Edit your OpenCode config (~/.config/opencode/opencode.json)
-{
-  "mcp": {
-    "your-server": {
-      "type": "local",
-      "enabled": true,
-      "command": ["..."],
-      "env": {}
-    }
-  }
-}
-
-# 2. Restart OpenCode
-# (router reloads config on OpenCode restart)
+python -m mcp_tool_router.opencode_gateway_server
 ```
 
-## Manual Config
+Default gateway bind: `127.0.0.1:4141`
 
-If you prefer to configure manually or need custom settings, edit `~/.config/opencode/opencode.json`:
+Environment variables:
 
-```json
-{
-  "mcp": {
-    "router": {
-      "type": "local",
-      "enabled": true,
-      "command": ["python3", "-m", "mcp_tool_router.router_mcp_server"]
-    },
-    "slack": {
-      "type": "local",
-      "enabled": false
-    },
-    "github": {
-      "type": "local",
-      "enabled": false,
-      "command": ["npx", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "$GITHUB_TOKEN" }
-    }
-  }
-}
-```
+- `ROUTER_GATEWAY_BIND` (default: `127.0.0.1`)
+- `ROUTER_GATEWAY_PORT` (default: `4141`)
+- `ROUTER_OPENCODE_UPSTREAM_URL` (optional explicit upstream OpenCode server URL)
+- `ROUTER_GATEWAY_TOP_K` (default: `20`)
+- `ROUTER_GATEWAY_BUDGET_TOKENS` (default: `1500`)
+
+Autostart behavior:
+
+- `npx mcpflow-router opencode install` automatically updates the `opencode` launcher.
+- The shim starts local OpenCode server/gateway if needed, then routes bare `opencode`
+  through `attach http://127.0.0.1:4141` automatically.
+- Subcommands like `opencode serve`, `opencode run`, `opencode mcp`, and
+  `opencode attach` pass through to the original binary unchanged.
+- Run `opencode` as your normal user (not `sudo`) so OpenCode uses the correct
+  home config/auth directories.
 
 ## Auto-configure Options
 
 ```bash
-npx @mcpflow/cli opencode install --help
+npx mcpflow-router opencode install --help
 ```
 
 | Option | Description |

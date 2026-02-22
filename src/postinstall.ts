@@ -8,14 +8,6 @@ import { fileURLToPath } from "node:url";
 
 function main(): void {
   const configPath = resolveConfigPath();
-  if (!fs.existsSync(configPath)) {
-    console.warn(
-      `[mcpflow] OpenCode config not found at ${configPath}. ` +
-        "Install OpenCode first or set OPENCODE_CONFIG to the correct path.",
-    );
-    return;
-  }
-
   ensurePythonPackage();
 
   const result = spawnSync(

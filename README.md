@@ -1,7 +1,7 @@
 # mcpflow-router
 
-Smart tool routing for [OpenCode](https://opencode.ai). Reduces MCP tool context usage
-through smart search, working-set management, and on-demand tool loading.
+Smart tool routing for OpenCode. Reduces tool context
+usage through smart search, working-set management, and on-demand tool loading.
 
 ## The Problem
 
@@ -14,15 +14,15 @@ mcpflow-router sits between OpenCode and your MCP servers, exposing only **3 met
 
 | Tool                  | Purpose                                            |
 | --------------------- | -------------------------------------------------- |
-| `router_select_tools` | Search for relevant tools by query |
-| `router_call_tool`    | Call a tool by `{serverId}:{toolName}`             |
-| `router_tool_info`    | Inspect a tool's full schema before calling it     |
+| `select_tools`        | Search for relevant tools by query |
+| `call_tool`           | Call a tool by `{serverId}:{toolName}`             |
+| `tool_info`           | Inspect a tool's full schema before calling it     |
 
 ```
 User: "Create a GitHub PR"
-  → OpenCode calls: router_select_tools({ query: "github pull request" })
+  → OpenCode calls: select_tools({ query: "github pull request" })
   → Router returns: [{ toolId: "github:create_pull_request", ... }]
-  → OpenCode calls: router_call_tool({ toolId: "github:create_pull_request", arguments: {...} })
+  → OpenCode calls: call_tool({ toolId: "github:create_pull_request", arguments: {...} })
 ```
 
 ## Quick Start
@@ -35,6 +35,7 @@ npx mcpflow-router opencode install
 
 # 2. Start OpenCode — it auto-loads mcpflow-router
 # (no manual config needed!)
+# Important: run `opencode` as your normal user (not with sudo)
 
 # 3. Verify it works
 opencode mcp list
@@ -45,6 +46,27 @@ That's it! mcpflow-router automatically:
 - ✅ Disables your existing MCP servers
 - ✅ Configures itself as single MCP entry
 - ✅ Starts managing all your tools via smart search
+
+## OpenCode Native Tools (Auto-ingest)
+
+The router auto-discovers OpenCode runtime tools through OpenCode's experimental
+HTTP endpoints, indexes them as `opencode-native:*`, and executes selected tools
+through OpenCode session APIs.
+
+Requires OpenCode `1.2.10+`.
+
+`npx mcpflow-router opencode install` automatically wires your `opencode`
+launcher so bare `opencode` uses router gateway mode. No extra user setup is
+required.
+
+For full per-message reduction across OpenCode built-ins and MCP tools, gateway
+mode is started automatically by that launcher. Manual run is still available:
+
+```bash
+python -m mcp_tool_router.opencode_gateway_server
+```
+
+Gateway mode is for OpenCode `--attach` / external HTTP-client flows.
 
 ### Install from Source
 
@@ -57,6 +79,7 @@ npx mcpflow-router opencode install
 ```
 
 For manual configuration and advanced options, see the [Configuration Guide](docs/configuration.md).
+For host-native tool integration direction, see [Host Tool Routing Plan](docs/host-tool-routing.md).
 
 ## License
 

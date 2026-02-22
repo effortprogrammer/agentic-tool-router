@@ -490,7 +490,7 @@ def _load_opencode_native_tools(
         return {}, {}
 
     base_url = _resolve_opencode_server_url()
-    timeout = _float_env("ROUTER_OPENCODE_NATIVE_TIMEOUT", 1.5)
+    timeout = _float_env("ROUTER_OPENCODE_NATIVE_TIMEOUT", 5.0)
     directory = os.environ.get("ROUTER_OPENCODE_DIRECTORY") or None
 
     try:
@@ -510,20 +510,16 @@ def _load_opencode_native_tools(
     if not tool_ids:
         return {}, {}
 
-    fetch_details = os.environ.get(
-        "ROUTER_OPENCODE_NATIVE_FETCH_DETAILS", "false"
-    ).lower() in {"1", "true", "yes"}
-    list_payload: list[dict[str, Any]] = []
-    if fetch_details:
-        try:
-            list_payload = _load_opencode_tool_list(
-                base_url, timeout=timeout, directory=directory
-            )
-        except Exception as exc:
-            print(
-                f"[mcp-tool-router] Warning: failed to load OpenCode native tool details: {exc}",
-                file=sys.stderr,
-            )
+    try:
+        list_payload = _load_opencode_tool_list(
+            base_url, timeout=timeout, directory=directory
+        )
+    except Exception as exc:
+        print(
+            f"[mcp-tool-router] Warning: failed to load OpenCode native tool details: {exc}",
+            file=sys.stderr,
+        )
+        list_payload = []
     definitions_by_id: dict[str, dict[str, Any]] = {}
     for item in list_payload:
         if not isinstance(item, dict):

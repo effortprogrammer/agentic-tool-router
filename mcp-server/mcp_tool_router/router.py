@@ -144,31 +144,11 @@ class ToolRouter:
         tools = mcp_client.tools_list()
         if isinstance(tools, dict):
             tools = tools.get("tools", [])
-        self.sync_from_tool_definitions(
-            provider_id=server_id,
-            tools=tools or [],
-            source_type="mcp",
-            source_platform="mcp",
-        )
-
-    def sync_from_tool_definitions(
-        self,
-        provider_id: str,
-        tools: Iterable[dict[str, Any]],
-        *,
-        source_type: str = "mcp",
-        source_platform: str = "mcp",
-    ) -> None:
         tool_cards: list[dict[str, Any]] = []
-        for tool in tools:
+        for tool in tools or []:
             if not isinstance(tool, dict):
                 continue
-            card = _toolcard_from_definition(
-                provider_id,
-                tool,
-                source_type=source_type,
-                source_platform=source_platform,
-            )
+            card = _toolcard_from_mcp(server_id, tool)
             if not card:
                 continue
             tool_id = card["toolId"]
@@ -245,21 +225,6 @@ class ToolRouter:
 
 
 def _toolcard_from_mcp(server_id: str, tool: dict[str, Any]) -> dict[str, Any]:
-    return _toolcard_from_definition(
-        server_id,
-        tool,
-        source_type="mcp",
-        source_platform="mcp",
-    )
-
-
-def _toolcard_from_definition(
-    provider_id: str,
-    tool: dict[str, Any],
-    *,
-    source_type: str,
-    source_platform: str,
-) -> dict[str, Any]:
     tool_name = tool.get("name") or tool.get("toolName")
     if not tool_name:
         return {}
@@ -272,14 +237,11 @@ def _toolcard_from_definition(
         tags = _derive_tags(tool_name, title, description)
     if not synonyms:
         synonyms = _derive_synonyms(tool_name)
-    tool_id = f"{provider_id}:{tool_name}"
+    tool_id = f"{server_id}:{tool_name}"
     card: dict[str, Any] = {
         "toolId": tool_id,
         "toolName": tool_name,
-        "serverId": provider_id,
-        "sourceType": source_type,
-        "sourcePlatform": source_platform,
-        "providerId": provider_id,
+        "serverId": server_id,
         "tags": tags,
         "synonyms": synonyms,
         "args": _args_from_schema(

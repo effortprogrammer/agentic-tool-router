@@ -1,7 +1,7 @@
 # mcpflow-router
 
-Smart tool routing for OpenCode. Reduces tool context
-usage through smart search, working-set management, and on-demand tool loading.
+Smart tool routing for [OpenCode](https://opencode.ai). Reduces MCP tool context usage
+through smart search, working-set management, and on-demand tool loading.
 
 ## The Problem
 
@@ -46,14 +46,6 @@ That's it! mcpflow-router automatically:
 - ✅ Configures itself as single MCP entry
 - ✅ Starts managing all your tools via smart search
 
-## OpenCode Native Tools (Auto-ingest)
-
-The router auto-discovers OpenCode runtime tools through OpenCode's experimental
-HTTP endpoints, indexes them as `opencode-native:*`, and executes selected tools
-through OpenCode session APIs.
-
-Requires OpenCode `1.2.10+`.
-
 ### Install from Source
 
 ```bash
@@ -65,7 +57,6 @@ npx mcpflow-router opencode install
 ```
 
 For manual configuration and advanced options, see the [Configuration Guide](docs/configuration.md).
-For host-native tool integration direction, see [Host Tool Routing Plan](docs/host-tool-routing.md).
 
 ## License
 

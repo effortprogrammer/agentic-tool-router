@@ -7,32 +7,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 type JsonObject = Record<string, unknown>;
-type InstallTarget = "opencode" | "claude" | "codex" | "openclaw";
-
-interface JsonInstallProfile {
-  target: InstallTarget;
-  kind: "json";
-  displayName: string;
-  envVar: string;
-  defaultConfigPath: string;
-  mcpField: "mcp" | "mcpServers";
-  wellKnownRemoteMcps?: Record<string, JsonObject>;
-  postWriteHook?: (configPath: string, createBackup: boolean) => void;
-}
-
-interface UnsupportedInstallProfile {
-  target: InstallTarget;
-  kind: "unsupported";
-  displayName: string;
-  reason: string;
-}
-
-type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 
 const ROUTER_MODULE = "mcp_tool_router.router_mcp_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
 
-const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
+const WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   context7: {
     type: "remote",
     url: "https://mcp.context7.com/mcp",
@@ -50,42 +29,6 @@ const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   },
 };
 
-const INSTALL_PROFILES: Record<InstallTarget, InstallProfile> = {
-  opencode: {
-    target: "opencode",
-    kind: "json",
-    displayName: "OpenCode",
-    envVar: "OPENCODE_CONFIG",
-    defaultConfigPath: "~/.config/opencode/opencode.json",
-    mcpField: "mcp",
-    wellKnownRemoteMcps: OPENCODE_WELL_KNOWN_REMOTE_MCPS,
-    postWriteHook: disableOhMyOpencodeMcps,
-  },
-  claude: {
-    target: "claude",
-    kind: "json",
-    displayName: "Claude Code",
-    envVar: "CLAUDE_CONFIG",
-    defaultConfigPath: "~/.claude.json",
-    mcpField: "mcpServers",
-  },
-  codex: {
-    target: "codex",
-    kind: "unsupported",
-    displayName: "Codex",
-    reason:
-      "Codex currently uses TOML config (~/.codex/config.toml). JSON-based auto-install is not enabled yet.",
-  },
-  openclaw: {
-    target: "openclaw",
-    kind: "json",
-    displayName: "OpenClaw",
-    envVar: "OPENCLAW_CONFIG",
-    defaultConfigPath: "~/.config/openclaw/openclaw.json",
-    mcpField: "mcpServers",
-  },
-};
-
 function main(): void {
   const args = process.argv.slice(2);
   if (
@@ -98,9 +41,8 @@ function main(): void {
     return;
   }
 
-  const target = args[0];
-  if (target && args.length >= 2 && args[1] === "install" && isInstallTarget(target)) {
-    installTarget(target, args.slice(2));
+  if (args[0] === "opencode" && args[1] === "install") {
+    opencodeInstall(args.slice(2));
     return;
   }
 
@@ -109,19 +51,15 @@ function main(): void {
   process.exit(1);
 }
 
-function installTarget(target: InstallTarget, args: string[]): void {
-  const profile = INSTALL_PROFILES[target];
-  if (profile.kind === "unsupported") {
-    console.error(
-      `${profile.displayName} install is not supported yet. ${profile.reason}`,
-    );
-    process.exit(1);
-  }
-
+function opencodeInstall(args: string[]): void {
   const options = parseInstallArgs(args);
-  const configPath = expandHome(options.config || process.env[profile.envVar] || profile.defaultConfigPath);
+  const configPath = expandHome(
+    options.config ||
+      process.env.OPENCODE_CONFIG ||
+      "~/.config/opencode/opencode.json",
+  );
   const payload = loadConfig(configPath);
-  const mcp = ensureMcpField(payload, profile.mcpField, profile.displayName);
+  const mcp = ensureMcp(payload);
 
   const routerId = options.routerId;
   const monorepoRoot = findMonorepoRoot();
@@ -151,13 +89,11 @@ function installTarget(target: InstallTarget, args: string[]): void {
 
   mcp[routerId] = routerEntry;
 
-  if (profile.wellKnownRemoteMcps) {
-    for (const [id, entry] of Object.entries(profile.wellKnownRemoteMcps)) {
-      if (id in mcp) {
-        continue;
-      }
-      mcp[id] = { ...entry };
+  for (const [id, entry] of Object.entries(WELL_KNOWN_REMOTE_MCPS)) {
+    if (id in mcp) {
+      continue;
     }
+    mcp[id] = { ...entry };
   }
 
   if (options.disableOthers) {
@@ -177,14 +113,9 @@ function installTarget(target: InstallTarget, args: string[]): void {
   }
 
   writeConfig(configPath, payload, options.createBackup);
-  console.log(`Updated ${profile.displayName} config at ${configPath}`);
-  if (profile.postWriteHook) {
-    profile.postWriteHook(configPath, options.createBackup);
-  }
-}
+  console.log(`Updated OpenCode config at ${configPath}`);
 
-function isInstallTarget(value: string): value is InstallTarget {
-  return value in INSTALL_PROFILES;
+  disableOhMyOpencodeMcps(configPath, options.createBackup);
 }
 
 function parseInstallArgs(args: string[]): {
@@ -295,29 +226,23 @@ function loadConfig(configPath: string): JsonObject {
     payload === null ||
     Array.isArray(payload)
   ) {
-    throw new Error("Config file must be a JSON object.");
+    throw new Error("OpenCode config must be a JSON object.");
   }
   return payload as JsonObject;
 }
 
-function ensureMcpField(
-  payload: JsonObject,
-  field: "mcp" | "mcpServers",
-  displayName: string,
-): Record<string, JsonObject> {
-  if (!(field in payload) || payload[field] == null) {
-    payload[field] = {};
+function ensureMcp(payload: JsonObject): Record<string, JsonObject> {
+  if (!("mcp" in payload) || payload.mcp == null) {
+    payload.mcp = {};
   }
   if (
-    typeof payload[field] !== "object" ||
-    payload[field] === null ||
-    Array.isArray(payload[field])
+    typeof payload.mcp !== "object" ||
+    payload.mcp === null ||
+    Array.isArray(payload.mcp)
   ) {
-    throw new Error(
-      `${displayName} config '${field}' field must be an object.`,
-    );
+    throw new Error("OpenCode config 'mcp' field must be an object.");
   }
-  return payload[field] as Record<string, JsonObject>;
+  return payload.mcp as Record<string, JsonObject>;
 }
 
 function writeConfig(
@@ -494,16 +419,10 @@ function findPython(): string | null {
 function printHelp(): void {
   console.log(
     [
-      "mcpflow-router <target> install [options]",
-      "",
-      "Targets:",
-      "  opencode   OpenCode JSON config (~/.config/opencode/opencode.json)",
-      "  claude     Claude Code JSON config (~/.claude.json)",
-      "  codex      Reserved target (TOML installer not yet enabled)",
-      "  openclaw   OpenClaw JSON config (~/.config/openclaw/openclaw.json)",
+      "mcpflow opencode install [options]",
       "",
       "Options:",
-      "  --config <path>           Override target config path",
+      "  --config <path>           OpenCode config path (default: ~/.config/opencode/opencode.json)",
       "  --router-id <id>          MCP server id for the router (default: router)",
       "  --router-command <cmd..>  Router command (default: python3 -m mcp_tool_router.router_mcp_server)",
       "  --keep-others             Keep existing enabled flags for other MCP entries",

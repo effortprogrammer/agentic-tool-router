@@ -54,18 +54,14 @@ through OpenCode session APIs.
 
 Requires OpenCode `1.2.10+`.
 
-`npx mcpflow-router opencode install` now also installs a managed `opencode`
-launcher shim (with backup) that makes bare `opencode` start through router
-gateway mode automatically.
-
-For full per-message reduction across OpenCode built-ins and MCP tools, gateway
-mode is started automatically by that launcher. Manual run is still available:
+For full per-message reduction across OpenCode built-ins and MCP tools, use
+gateway mode:
 
 ```bash
 python -m mcp_tool_router.opencode_gateway_server
 ```
 
-Gateway mode is for OpenCode `--attach` / external HTTP-client flows.
+Gateway is also autostarted by default when OpenCode launches the router MCP process.
 
 ### Install from Source
 

@@ -18,7 +18,6 @@ interface JsonInstallProfile {
   mcpField: "mcp" | "mcpServers";
   wellKnownRemoteMcps?: Record<string, JsonObject>;
   postWriteHook?: (configPath: string, createBackup: boolean) => void;
-  postInstallHook?: (createBackup: boolean) => void;
 }
 
 interface UnsupportedInstallProfile {
@@ -61,7 +60,6 @@ const INSTALL_PROFILES: Record<InstallTarget, InstallProfile> = {
     mcpField: "mcp",
     wellKnownRemoteMcps: OPENCODE_WELL_KNOWN_REMOTE_MCPS,
     postWriteHook: disableOhMyOpencodeMcps,
-    postInstallHook: ensureOpencodeGatewayShim,
   },
   claude: {
     target: "claude",
@@ -182,9 +180,6 @@ function installTarget(target: InstallTarget, args: string[]): void {
   console.log(`Updated ${profile.displayName} config at ${configPath}`);
   if (profile.postWriteHook) {
     profile.postWriteHook(configPath, options.createBackup);
-  }
-  if (profile.postInstallHook) {
-    profile.postInstallHook(options.createBackup);
   }
 }
 
@@ -340,9 +335,6 @@ function writeConfig(
 
 const OH_MY_OPENCODE_BUILTIN_MCPS = ["context7", "grep_app", "websearch"];
 
-const OPENCODE_SHIM_MARKER = "# mcpflow-router managed opencode launcher";
-const OPENCODE_REAL_SUFFIX = ".mcpflow-real";
-
 function disableOhMyOpencodeMcps(
   opencodeConfigPath: string,
   createBackup: boolean,
@@ -384,135 +376,6 @@ function disableOhMyOpencodeMcps(
   console.log(
     `Disabled oh-my-opencode built-in MCPs (${OH_MY_OPENCODE_BUILTIN_MCPS.join(", ")}) — now routed through the router.`,
   );
-}
-
-function ensureOpencodeGatewayShim(createBackup: boolean): void {
-  const opencodePath = findCommand("opencode");
-  if (!opencodePath) {
-    console.warn(
-      "[mcpflow] Could not find 'opencode' binary in PATH; skipping automatic gateway launcher shim.",
-    );
-    return;
-  }
-
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(opencodePath);
-  } catch {
-    console.warn(
-      `[mcpflow] Could not inspect ${opencodePath}; skipping automatic gateway launcher shim.`,
-    );
-    return;
-  }
-
-  if (!stat.isFile()) {
-    console.warn(
-      `[mcpflow] '${opencodePath}' is not a regular file; skipping automatic gateway launcher shim.`,
-    );
-    return;
-  }
-
-  const existingContent = safeReadText(opencodePath);
-  if (existingContent !== null && existingContent.includes(OPENCODE_SHIM_MARKER)) {
-    return;
-  }
-
-  const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
-  if (createBackup) {
-    fs.copyFileSync(opencodePath, `${opencodePath}.bak`);
-  }
-  if (fs.existsSync(realBinaryPath)) {
-    fs.copyFileSync(opencodePath, realBinaryPath);
-  } else {
-    fs.renameSync(opencodePath, realBinaryPath);
-  }
-
-  const shim = buildOpencodeShim(realBinaryPath);
-  fs.writeFileSync(opencodePath, shim, { encoding: "utf-8", mode: 0o755 });
-  fs.chmodSync(opencodePath, 0o755);
-
-  console.log(
-    `[mcpflow] Installed automatic OpenCode gateway launcher at ${opencodePath}.`,
-  );
-}
-
-function safeReadText(filePath: string): string | null {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
-function buildOpencodeShim(realBinaryPath: string): string {
-  const quotedReal = shSingleQuote(realBinaryPath);
-  const marker = OPENCODE_SHIM_MARKER;
-  return [
-    "#!/usr/bin/env bash",
-    marker,
-    "set -euo pipefail",
-    "REAL_OPENCODE=" + quotedReal,
-    "GATEWAY_HOST=${ROUTER_GATEWAY_BIND:-127.0.0.1}",
-    "GATEWAY_PORT=${ROUTER_GATEWAY_PORT:-4141}",
-    "UPSTREAM_URL=${ROUTER_OPENCODE_UPSTREAM_URL:-http://127.0.0.1:4096}",
-    "export ROUTER_OPENCODE_UPSTREAM_URL=\"$UPSTREAM_URL\"",
-    "started_server=0",
-    "started_gateway=0",
-    "server_pid=",
-    "gateway_pid=",
-    "cleanup() {",
-    "  if [[ \"$started_gateway\" -eq 1 && -n \"${gateway_pid}\" ]]; then",
-    "    kill \"$gateway_pid\" >/dev/null 2>&1 || true",
-    "  fi",
-    "  if [[ \"$started_server\" -eq 1 && -n \"${server_pid}\" ]]; then",
-    "    kill \"$server_pid\" >/dev/null 2>&1 || true",
-    "  fi",
-    "}",
-    "trap cleanup EXIT INT TERM",
-    "if [[ $# -gt 0 ]]; then",
-    "  case \"$1\" in",
-    "    attach|serve|web|acp|completion|mcp|run|debug|auth|agent|upgrade|uninstall|models|stats|export|import|github|pr|session|db)",
-    "      exec \"$REAL_OPENCODE\" \"$@\"",
-    "      ;;",
-    "    -h|--help|-v|--version|--print-logs|--log-level|--port|--hostname|--mdns|--mdns-domain|--cors|-m|--model|-c|--continue|-s|--session|--fork|--prompt|--agent)",
-    "      exec \"$REAL_OPENCODE\" \"$@\"",
-    "      ;;",
-    "    *)",
-    "      if [[ \"$1\" != -* ]]; then",
-    "        first_project=$1",
-    "        shift",
-    "        set -- --dir=\"$first_project\" \"$@\"",
-    "      fi",
-    "      ;;",
-    "  esac",
-    "fi",
-    "if ! lsof -nP -iTCP:4096 -sTCP:LISTEN >/dev/null 2>&1; then",
-    "  \"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
-    "  server_pid=$!",
-    "  started_server=1",
-    "fi",
-    "if ! lsof -nP -iTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN >/dev/null 2>&1; then",
-    "  if command -v python3 >/dev/null 2>&1; then",
-    "    python3 -m mcp_tool_router.opencode_gateway_server >/dev/null 2>&1 &",
-    "  else",
-    "    python -m mcp_tool_router.opencode_gateway_server >/dev/null 2>&1 &",
-    "  fi",
-    "  gateway_pid=$!",
-    "  started_gateway=1",
-    "fi",
-    "for _ in {1..80}; do",
-    "  if lsof -nP -iTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN >/dev/null 2>&1; then",
-    "    break",
-    "  fi",
-    "  sleep 0.05",
-    "done",
-    "exec \"$REAL_OPENCODE\" attach \"http://${GATEWAY_HOST}:${GATEWAY_PORT}\" \"$@\"",
-    "",
-  ].join("\n");
-}
-
-function shSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function expandHome(value: string): string {

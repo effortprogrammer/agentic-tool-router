@@ -35,11 +35,8 @@ Environment variables:
 
 Autostart behavior:
 
-- `npx mcpflow-router opencode install` installs a managed `opencode` launcher shim.
-- The shim starts local OpenCode server/gateway if needed, then routes bare `opencode`
-  through `attach http://127.0.0.1:4141` automatically.
-- Subcommands like `opencode serve`, `opencode run`, `opencode mcp`, and
-  `opencode attach` pass through to the original binary unchanged.
+- When OpenCode starts the router MCP process, gateway autostart is enabled by default.
+- Disable with `ROUTER_GATEWAY_AUTOSTART=false`.
 
 ## Auto-configure Options
 

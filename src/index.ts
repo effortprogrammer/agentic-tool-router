@@ -18,7 +18,10 @@ interface JsonInstallProfile {
   mcpField: "mcp" | "mcpServers";
   wellKnownRemoteMcps?: Record<string, JsonObject>;
   postWriteHook?: (configPath: string, createBackup: boolean) => void;
-  postInstallHook?: (createBackup: boolean) => void;
+  postInstallHook?: (
+    createBackup: boolean,
+    gatewayRuntime: { command: string[]; env: Record<string, string> },
+  ) => void;
 }
 
 interface UnsupportedInstallProfile {
@@ -31,6 +34,7 @@ interface UnsupportedInstallProfile {
 type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 
 const ROUTER_MODULE = "mcp_tool_router.router_mcp_server";
+const GATEWAY_MODULE = "mcp_tool_router.opencode_gateway_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
 
 const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
@@ -131,6 +135,7 @@ function installTarget(target: InstallTarget, args: string[]): void {
     options.routerCommand.length > 0
       ? { command: options.routerCommand, env: {} as Record<string, string> }
       : resolveRouterCommand(monorepoRoot);
+  const gatewayResolved = resolveGatewayCommand(monorepoRoot);
 
   const existing = mcp[routerId];
   const routerEntry =
@@ -184,7 +189,7 @@ function installTarget(target: InstallTarget, args: string[]): void {
     profile.postWriteHook(configPath, options.createBackup);
   }
   if (profile.postInstallHook) {
-    profile.postInstallHook(options.createBackup);
+    profile.postInstallHook(options.createBackup, gatewayResolved);
   }
 
   if (target === "opencode") {
@@ -397,7 +402,10 @@ function disableOhMyOpencodeMcps(
   );
 }
 
-function ensureOpencodeGatewayShim(createBackup: boolean): void {
+function ensureOpencodeGatewayShim(
+  createBackup: boolean,
+  gatewayRuntime: { command: string[]; env: Record<string, string> },
+): void {
   const opencodePath = findCommand("opencode");
   if (!opencodePath) {
     console.warn(
@@ -424,21 +432,29 @@ function ensureOpencodeGatewayShim(createBackup: boolean): void {
   }
 
   const existingContent = safeReadText(opencodePath);
-  if (existingContent !== null && existingContent.includes(OPENCODE_SHIM_MARKER)) {
-    return;
-  }
+  const hasManagedShim =
+    existingContent !== null && existingContent.includes(OPENCODE_SHIM_MARKER);
 
   const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
-  if (createBackup) {
-    fs.copyFileSync(opencodePath, `${opencodePath}.bak`);
-  }
-  if (fs.existsSync(realBinaryPath)) {
-    fs.copyFileSync(opencodePath, realBinaryPath);
+  if (hasManagedShim) {
+    if (!fs.existsSync(realBinaryPath)) {
+      console.warn(
+        `[mcpflow] Found managed OpenCode shim but missing backup binary at ${realBinaryPath}. Skipping shim update.`,
+      );
+      return;
+    }
   } else {
-    fs.renameSync(opencodePath, realBinaryPath);
+    if (createBackup) {
+      fs.copyFileSync(opencodePath, `${opencodePath}.bak`);
+    }
+    if (fs.existsSync(realBinaryPath)) {
+      fs.copyFileSync(opencodePath, realBinaryPath);
+    } else {
+      fs.renameSync(opencodePath, realBinaryPath);
+    }
   }
 
-  const shim = buildOpencodeShim(realBinaryPath);
+  const shim = buildOpencodeShim(realBinaryPath, gatewayRuntime);
   fs.writeFileSync(opencodePath, shim, { encoding: "utf-8", mode: 0o755 });
   fs.chmodSync(opencodePath, 0o755);
 
@@ -455,9 +471,22 @@ function safeReadText(filePath: string): string | null {
   }
 }
 
-function buildOpencodeShim(realBinaryPath: string): string {
+function buildOpencodeShim(
+  realBinaryPath: string,
+  gatewayRuntime: { command: string[]; env: Record<string, string> },
+): string {
   const quotedReal = shSingleQuote(realBinaryPath);
   const marker = OPENCODE_SHIM_MARKER;
+  const gatewayEnvParts = Object.entries(gatewayRuntime.env).map(
+    ([k, v]) => `${k}=${shSingleQuote(v)}`,
+  );
+  const gatewayCommandParts = gatewayRuntime.command.map((part) =>
+    shSingleQuote(part),
+  );
+  const gatewayLaunch =
+    gatewayEnvParts.length > 0
+      ? `env ${gatewayEnvParts.join(" ")} ${gatewayCommandParts.join(" ")}`
+      : gatewayCommandParts.join(" ");
   return [
     "#!/usr/bin/env bash",
     marker,
@@ -508,11 +537,7 @@ function buildOpencodeShim(realBinaryPath: string): string {
     "  started_server=1",
     "fi",
     "if ! lsof -nP -iTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN >/dev/null 2>&1; then",
-    "  if command -v python3 >/dev/null 2>&1; then",
-    "    python3 -m mcp_tool_router.opencode_gateway_server >/dev/null 2>&1 &",
-    "  else",
-    "    python -m mcp_tool_router.opencode_gateway_server >/dev/null 2>&1 &",
-    "  fi",
+    `  ${gatewayLaunch} >/dev/null 2>&1 &`,
     "  gateway_pid=$!",
     "  started_gateway=1",
     "fi",
@@ -545,8 +570,21 @@ function printJson(payload: JsonObject): void {
 function resolveRouterCommand(
   monorepoRoot: string | null,
 ): { command: string[]; env: Record<string, string> } {
+  return resolvePythonModuleCommand(monorepoRoot, ROUTER_MODULE);
+}
+
+function resolveGatewayCommand(
+  monorepoRoot: string | null,
+): { command: string[]; env: Record<string, string> } {
+  return resolvePythonModuleCommand(monorepoRoot, GATEWAY_MODULE);
+}
+
+function resolvePythonModuleCommand(
+  monorepoRoot: string | null,
+  moduleName: string,
+): { command: string[]; env: Record<string, string> } {
   const env: Record<string, string> = {};
-  const defaultCommand = ["python3", "-m", ROUTER_MODULE];
+  const defaultCommand = ["python3", "-m", moduleName];
 
   if (monorepoRoot) {
     const pythonDir = path.join(monorepoRoot, "mcp-server");
@@ -570,7 +608,7 @@ function resolveRouterCommand(
       fs.existsSync(venvPython) &&
       canImport(venvPython, "httpx", env)
     ) {
-      return { command: [venvPython, "-m", ROUTER_MODULE], env };
+      return { command: [venvPython, "-m", moduleName], env };
     }
   }
 
@@ -580,7 +618,7 @@ function resolveRouterCommand(
     systemPython !== null &&
     canImport(systemPython, "httpx", env)
   ) {
-    return { command: [systemPython, "-m", ROUTER_MODULE], env };
+    return { command: [systemPython, "-m", moduleName], env };
   }
 
   // 3. uv run — auto-installs deps in ephemeral env
@@ -588,7 +626,7 @@ function resolveRouterCommand(
   if (uv !== null) {
     const withArgs = REQUIRED_PACKAGES.flatMap((pkg) => ["--with", pkg]);
     return {
-      command: [uv, "run", ...withArgs, "python3", "-m", ROUTER_MODULE],
+      command: [uv, "run", ...withArgs, "python3", "-m", moduleName],
       env,
     };
   }

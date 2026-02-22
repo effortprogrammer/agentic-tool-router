@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +42,7 @@ class _GatewayState:
     config: GatewayConfig
     lock: threading.Lock
     runtime_ids_cache: _RuntimeIdsCache | None = None
+    session_permission_hashes: dict[str, str] | None = None
 
 
 _STATE: _GatewayState | None = None
@@ -227,18 +229,38 @@ def _inject_tools_allowlist(
     if selected is None:
         return raw_body
 
+    directory = _first(query.get("directory"))
+    runtime_all_ids = _runtime_tool_ids(state, directory)
+
     if not selected:
-        payload["tools"] = {}
+        _update_session_permissions(
+            state,
+            session_id=session_id,
+            directory=directory,
+            runtime_all_ids=runtime_all_ids,
+            allowed_ids=set(),
+        )
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
             "utf-8"
         )
 
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
-        _runtime_tool_ids(state, _first(query.get("directory"))),
+        runtime_all_ids,
     )
     if not runtime_ids:
-        return raw_body
+        _update_session_permissions(
+            state,
+            session_id=session_id,
+            directory=directory,
+            runtime_all_ids=runtime_all_ids,
+            allowed_ids=set(),
+        )
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
 
     existing = payload.get("tools")
     if isinstance(existing, dict):
@@ -249,10 +271,90 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            return raw_body
+            _update_session_permissions(
+                state,
+                session_id=session_id,
+                directory=directory,
+                runtime_all_ids=runtime_all_ids,
+                allowed_ids=set(),
+            )
+            payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+            return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+                "utf-8"
+            )
 
+    _update_session_permissions(
+        state,
+        session_id=session_id,
+        directory=directory,
+        runtime_all_ids=runtime_all_ids,
+        allowed_ids=set(runtime_ids),
+    )
     payload["tools"] = {tool_id: True for tool_id in runtime_ids}
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _update_session_permissions(
+    state: _GatewayState,
+    *,
+    session_id: str,
+    directory: str | None,
+    runtime_all_ids: set[str],
+    allowed_ids: set[str],
+) -> None:
+    if not runtime_all_ids:
+        return
+
+    rules = [
+        {
+            "permission": tool_id,
+            "pattern": "*",
+            "action": "allow" if tool_id in allowed_ids else "deny",
+        }
+        for tool_id in sorted(runtime_all_ids)
+    ]
+    body_bytes = json.dumps(
+        {"permission": rules}, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    digest = hashlib.sha256(body_bytes).hexdigest()
+
+    with state.lock:
+        cache = state.session_permission_hashes
+        if cache is None:
+            cache = {}
+            state.session_permission_hashes = cache
+        if cache.get(session_id) == digest:
+            return
+
+    query = ""
+    if directory:
+        query = "?" + urlparse.urlencode({"directory": directory})
+    request_obj = urlrequest.Request(
+        f"{state.config.upstream_url.rstrip('/')}/session/{urlparse.quote(session_id, safe='')}{query}",
+        method="PATCH",
+        data=body_bytes,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        timeout_value = (
+            None
+            if state.config.request_timeout_sec <= 0
+            else state.config.request_timeout_sec
+        )
+        with urlrequest.urlopen(request_obj, timeout=timeout_value):
+            pass
+    except Exception:
+        return
+
+    with state.lock:
+        cache = state.session_permission_hashes
+        if cache is None:
+            cache = {}
+            state.session_permission_hashes = cache
+        cache[session_id] = digest
 
 
 def _select_tools_with_timeout(
@@ -310,6 +412,24 @@ def _call_select_tools_prefer_sync(
     top_k: int,
     budget_tokens: int,
 ) -> list[str]:
+    try:
+        return hub.select_tools(
+            session_id=session_id,
+            query=query,
+            top_k=top_k,
+            budget_tokens=budget_tokens,
+            sync=False,
+        )
+    except TypeError:
+        return hub.select_tools(
+            session_id=session_id,
+            query=query,
+            top_k=top_k,
+            budget_tokens=budget_tokens,
+        )
+    except Exception:
+        pass
+
     try:
         return hub.select_tools(
             session_id=session_id,
@@ -493,6 +613,7 @@ def main() -> int:
         hub=hub,
         config=config,
         lock=threading.Lock(),
+        session_permission_hashes={},
     )
     server = ThreadingHTTPServer(
         (config.bind_host, config.bind_port), OpenCodeGatewayHandler

@@ -1,54 +1,23 @@
 # Configuration Guide
 
-## Adding New MCP Servers
+OpenCode native auto-ingest is the primary path.
 
-```bash
-# 1. Edit your OpenCode config (~/.config/opencode/opencode.json)
-{
-  "mcp": {
-    "your-server": {
-      "type": "local",
-      "enabled": true,
-      "command": ["..."],
-      "env": {}
-    }
-  }
-}
+## OpenCode Native Auto-Ingest (Primary)
 
-# 2. Restart OpenCode
-# (router reloads config on OpenCode restart)
-```
+Router can auto-discover OpenCode runtime tools via OpenCode experimental
+endpoints and register them into the catalog as `opencode-native:*`.
 
-## Manual Config
+Compatibility notes:
 
-If you prefer to configure manually or need custom settings, edit `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "mcp": {
-    "router": {
-      "type": "local",
-      "enabled": true,
-      "command": ["python3", "-m", "mcp_tool_router.router_mcp_server"]
-    },
-    "slack": {
-      "type": "local",
-      "enabled": false
-    },
-    "github": {
-      "type": "local",
-      "enabled": false,
-      "command": ["npx", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "$GITHUB_TOKEN" }
-    }
-  }
-}
-```
+- Endpoints used: `/experimental/tool/ids`, `/experimental/tool`, `/session/{id}/message`
+- Tested with OpenCode `1.2.10`
+- OpenCode does not publish a hard minimum version guarantee for these
+  experimental endpoints
 
 ## Auto-configure Options
 
 ```bash
-npx @mcpflow/cli opencode install --help
+npx mcpflow-router opencode install --help
 ```
 
 | Option | Description |

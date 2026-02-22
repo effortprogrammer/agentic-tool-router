@@ -730,6 +730,12 @@ def _float_env(name: str, default: float) -> float:
 
 
 def _resolve_opencode_server_url() -> str:
+    upstream = os.environ.get("ROUTER_OPENCODE_UPSTREAM_URL")
+    if upstream and upstream.strip():
+        upstream_url = upstream.strip().rstrip("/")
+        if _opencode_url_reachable(upstream_url):
+            return upstream_url
+
     explicit = os.environ.get("OPENCODE_SERVER_URL")
     if explicit and explicit.strip():
         explicit_url = explicit.strip().rstrip("/")

@@ -14,6 +14,25 @@ Compatibility notes:
 - OpenCode does not publish a hard minimum version guarantee for these
   experimental endpoints
 
+## Gateway Mode (Built-ins + MCP Reduction)
+
+To reduce both OpenCode built-in tools and MCP tools per message, run the
+OpenCode gateway and point your OpenCode server URL to the gateway.
+
+```bash
+python -m mcp_tool_router.opencode_gateway_server
+```
+
+Default gateway bind: `127.0.0.1:4141`
+
+Environment variables:
+
+- `ROUTER_GATEWAY_BIND` (default: `127.0.0.1`)
+- `ROUTER_GATEWAY_PORT` (default: `4141`)
+- `ROUTER_OPENCODE_UPSTREAM_URL` (optional explicit upstream OpenCode server URL)
+- `ROUTER_GATEWAY_TOP_K` (default: `20`)
+- `ROUTER_GATEWAY_BUDGET_TOKENS` (default: `1500`)
+
 ## Auto-configure Options
 
 ```bash

@@ -7,7 +7,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
 from typing import Any
-import sys
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest

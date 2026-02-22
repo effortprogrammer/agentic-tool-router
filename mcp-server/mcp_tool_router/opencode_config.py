@@ -46,26 +46,8 @@ def apply_router_config(
     else:
         resolved_cmd, resolved_env = _resolve_router_command()
 
-    router_entry = (
-        dict(mcp.get(router_id, {})) if isinstance(mcp.get(router_id), dict) else {}
-    )
-    router_entry.update(
-        {
-            "type": "local",
-            "enabled": False,
-            "command": resolved_cmd,
-        }
-    )
-    if resolved_env:
-        environment = (
-            dict(router_entry.get("environment", {}))
-            if isinstance(router_entry.get("environment"), dict)
-            else {}
-        )
-        environment.update(resolved_env)
-        router_entry["environment"] = environment
-
-    mcp[router_id] = router_entry
+    _ = (resolved_cmd, resolved_env)
+    mcp.pop(router_id, None)
 
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:
@@ -135,28 +117,8 @@ def main() -> int:
     else:
         resolved_cmd, resolved_env = _resolve_router_command()
 
-    router_entry = (
-        dict(mcp.get(args.router_id, {}))
-        if isinstance(mcp.get(args.router_id), dict)
-        else {}
-    )
-    router_entry.update(
-        {
-            "type": "local",
-            "enabled": False,
-            "command": resolved_cmd,
-        }
-    )
-    if resolved_env:
-        environment = (
-            dict(router_entry.get("environment", {}))
-            if isinstance(router_entry.get("environment"), dict)
-            else {}
-        )
-        environment.update(resolved_env)
-        router_entry["environment"] = environment
-
-    mcp[args.router_id] = router_entry
+    _ = (resolved_cmd, resolved_env)
+    mcp.pop(args.router_id, None)
 
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:

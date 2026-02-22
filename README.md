@@ -61,6 +61,8 @@ gateway mode:
 python -m mcp_tool_router.opencode_gateway_server
 ```
 
+Gateway is also autostarted by default when OpenCode launches the router MCP process.
+
 ### Install from Source
 
 ```bash

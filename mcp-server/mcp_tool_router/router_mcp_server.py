@@ -419,10 +419,6 @@ def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
         include_disabled=include_disabled,
         ignore_ids=sorted(ignore_ids),
     )
-    try:
-        hub.sync_all()
-    except Exception:
-        pass
     return hub, config_path, include_disabled, sorted(ignore_ids), routerd_cmd
 
 

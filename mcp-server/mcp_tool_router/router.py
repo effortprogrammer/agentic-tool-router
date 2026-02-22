@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import queue
 import re
 import shlex
@@ -10,7 +11,18 @@ import threading
 from typing import Any, Iterable
 
 
-_ROUTERD_TIMEOUT: float = 30.0
+def _routerd_timeout() -> float:
+    raw = os.environ.get("ROUTER_ROUTERD_TIMEOUT_SEC", "4.0")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 4.0
+    if value <= 0:
+        return 4.0
+    return value
+
+
+_ROUTERD_TIMEOUT: float = _routerd_timeout()
 
 
 @dataclass

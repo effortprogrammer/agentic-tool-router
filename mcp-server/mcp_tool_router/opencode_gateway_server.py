@@ -110,12 +110,17 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         )
 
         is_stream = _should_stream_proxy(path, headers, method)
+        is_message_post = method.upper() == "POST" and _is_session_message_path(path)
 
         try:
             timeout = (
                 state.config.stream_timeout_sec
                 if is_stream
-                else state.config.request_timeout_sec
+                else (
+                    max(state.config.request_timeout_sec, 180.0)
+                    if is_message_post
+                    else state.config.request_timeout_sec
+                )
             )
             timeout_value = None if timeout <= 0 else timeout
             with urlrequest.urlopen(
@@ -192,10 +197,6 @@ def _should_stream_proxy(
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
     if "text/event-stream" in accept.lower():
-        return True
-    # Message POST blocks until LLM completes (60-120s+).
-    # Stream-proxy it to avoid the 15s request timeout and deliver bytes incrementally.
-    if method.upper() == "POST" and _is_session_message_path(path):
         return True
     return False
 

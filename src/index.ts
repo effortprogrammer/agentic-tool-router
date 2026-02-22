@@ -137,30 +137,26 @@ function installTarget(target: InstallTarget, args: string[]): void {
       : resolveRouterCommand(monorepoRoot);
   const gatewayResolved = resolveGatewayCommand(monorepoRoot);
 
-  if (target === "opencode") {
-    delete mcp[routerId];
-  } else {
-    const existing = mcp[routerId];
-    const routerEntry =
-      typeof existing === "object" && existing !== null
-        ? { ...(existing as JsonObject) }
+  const existing = mcp[routerId];
+  const routerEntry =
+    typeof existing === "object" && existing !== null
+      ? { ...(existing as JsonObject) }
+      : {};
+  routerEntry.type = "local";
+  routerEntry.enabled = target === "opencode" ? false : true;
+  routerEntry.command = resolved.command;
+
+  if (Object.keys(resolved.env).length > 0) {
+    const environment =
+      typeof routerEntry.environment === "object" &&
+      routerEntry.environment !== null
+        ? { ...(routerEntry.environment as JsonObject) }
         : {};
-    routerEntry.type = "local";
-    routerEntry.enabled = true;
-    routerEntry.command = resolved.command;
-
-    if (Object.keys(resolved.env).length > 0) {
-      const environment =
-        typeof routerEntry.environment === "object" &&
-        routerEntry.environment !== null
-          ? { ...(routerEntry.environment as JsonObject) }
-          : {};
-      Object.assign(environment, resolved.env);
-      routerEntry.environment = environment;
-    }
-
-    mcp[routerId] = routerEntry;
+    Object.assign(environment, resolved.env);
+    routerEntry.environment = environment;
   }
+
+  mcp[routerId] = routerEntry;
 
   if (profile.wellKnownRemoteMcps) {
     for (const [id, entry] of Object.entries(profile.wellKnownRemoteMcps)) {

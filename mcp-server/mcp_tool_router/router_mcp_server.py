@@ -211,17 +211,13 @@ class RouterMcpServer:
         if mode not in ("bm25", "regex", None):
             mode = None
 
-        try:
-            tool_ids = self._hub.select_tools(
-                session_id,
-                query,
-                top_k=top_k,
-                budget_tokens=budget_tokens,
-                sync=False,
-                mode=mode,
-            )
-        except Exception as exc:
-            raise RpcError(-32000, _format_tool_error(exc, operation="select_tools"))
+        tool_ids = self._hub.select_tools(
+            session_id,
+            query,
+            top_k=top_k,
+            budget_tokens=budget_tokens,
+            mode=mode,
+        )
         result: dict[str, Any] = {"selectedToolIds": tool_ids}
         if include_tools:
             result["tools"] = self._format_tools(tool_ids)
@@ -235,13 +231,7 @@ class RouterMcpServer:
                 f"{CALL_TOOL_NAME} requires 'toolId'.",
             )
         payload = arguments.get("arguments") or {}
-        try:
-            result = self._hub.call_tool(tool_id, payload)
-        except Exception as exc:
-            raise RpcError(
-                -32000,
-                _format_tool_error(exc, tool_id=tool_id, operation="call_tool"),
-            )
+        result = self._hub.call_tool(tool_id, payload)
 
         session_id = arguments.get("sessionId") or self._default_session
         if session_id:
@@ -354,37 +344,6 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
-def _format_tool_error(
-    exc: Exception,
-    *,
-    operation: str,
-    tool_id: str | None = None,
-) -> str:
-    message = str(exc).strip() or exc.__class__.__name__
-    source = _classify_error_source(message)
-    detail = f"source={source}; operation={operation}"
-    if tool_id:
-        detail = f"{detail}; toolId={tool_id}"
-    return f"[{detail}] {message}"
-
-
-def _classify_error_source(message: str) -> str:
-    lower = message.lower()
-    if "failed opencode request" in lower or "opencode response" in lower:
-        return "opencode-native"
-    if "host tool 'opencode-native:" in lower:
-        return "opencode-native"
-    if "mcp server did not respond" in lower or "mcp server closed" in lower:
-        return "mcp-server"
-    if "http timeout connecting" in lower or "http error connecting" in lower:
-        return "mcp-server"
-    if "routerd did not respond" in lower or "json-rpc client is closed" in lower:
-        return "router-core"
-    if "json-rpc error" in lower:
-        return "mcp-server"
-    return "unknown"
-
-
 def _default_routerd_cmd() -> str:
     env = os.environ.get("ROUTERD")
     if env:
@@ -415,14 +374,10 @@ def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
     hub = ToolRouterHub.from_opencode_config(
         config_path,
         routerd_path=routerd_cmd,
-        auto_sync=False,
+        auto_sync=True,
         include_disabled=include_disabled,
         ignore_ids=sorted(ignore_ids),
     )
-    try:
-        hub.sync_all()
-    except Exception:
-        pass
     return hub, config_path, include_disabled, sorted(ignore_ids), routerd_cmd
 
 

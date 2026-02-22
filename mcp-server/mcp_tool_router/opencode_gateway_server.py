@@ -110,12 +110,17 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         )
 
         is_stream = _should_stream_proxy(path, headers, method)
+        is_message_post = method.upper() == "POST" and _is_session_message_path(path)
 
         try:
             timeout = (
                 state.config.stream_timeout_sec
                 if is_stream
-                else state.config.request_timeout_sec
+                else (
+                    max(state.config.request_timeout_sec, 180.0)
+                    if is_message_post
+                    else state.config.request_timeout_sec
+                )
             )
             timeout_value = None if timeout <= 0 else timeout
             with urlrequest.urlopen(
@@ -126,7 +131,13 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {"transfer-encoding", "connection", "content-length"}:
+                        if low in {
+                            "transfer-encoding",
+                            "connection",
+                            "content-length",
+                            "date",
+                            "server",
+                        }:
                             continue
                         self.send_header(key, value)
                     self.end_headers()
@@ -147,7 +158,13 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {"transfer-encoding", "connection"}:
+                        if low in {
+                            "transfer-encoding",
+                            "connection",
+                            "content-length",
+                            "date",
+                            "server",
+                        }:
                             continue
                         self.send_header(key, value)
                     self.send_header("Content-Length", str(len(payload)))
@@ -159,7 +176,13 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             self.send_response(exc.code)
             for key, value in exc.headers.items() if exc.headers else []:
                 low = key.lower()
-                if low in {"transfer-encoding", "connection"}:
+                if low in {
+                    "transfer-encoding",
+                    "connection",
+                    "content-length",
+                    "date",
+                    "server",
+                }:
                     continue
                 self.send_header(key, value)
             self.send_header("Content-Length", str(len(payload)))
@@ -188,14 +211,12 @@ def _is_session_message_path(path: str) -> bool:
 def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
+    if method.upper() == "POST" and _is_session_message_path(path):
+        return False
     if path == "/event":
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
     if "text/event-stream" in accept.lower():
-        return True
-    # Message POST blocks until LLM completes (60-120s+).
-    # Stream-proxy it to avoid the 15s request timeout and deliver bytes incrementally.
-    if method.upper() == "POST" and _is_session_message_path(path):
         return True
     return False
 

@@ -22,7 +22,6 @@ class GatewayConfig:
     upstream_url: str
     request_timeout_sec: float
     stream_timeout_sec: float
-    select_timeout_sec: float
     select_top_k: int
     select_budget_tokens: int
     default_session_id: str
@@ -209,9 +208,12 @@ def _inject_tools_allowlist(
         return raw_body
 
     session_id = _session_id_from_path(path) or state.config.default_session_id
-    selected = _select_tools_with_timeout(state, session_id, query_text)
-    if not selected:
-        return raw_body
+    selected = state.hub.select_tools(
+        session_id=session_id,
+        query=query_text,
+        top_k=state.config.select_top_k,
+        budget_tokens=state.config.select_budget_tokens,
+    )
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
         _runtime_tool_ids(state, _first(query.get("directory"))),
@@ -232,78 +234,6 @@ def _inject_tools_allowlist(
 
     payload["tools"] = {tool_id: True for tool_id in runtime_ids}
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
-def _select_tools_with_timeout(
-    state: _GatewayState,
-    session_id: str,
-    query_text: str,
-) -> list[str]:
-    timeout = state.config.select_timeout_sec
-    if timeout <= 0:
-        try:
-            result = _call_select_tools_no_sync(
-                state.hub,
-                session_id=session_id,
-                query=query_text,
-                top_k=state.config.select_top_k,
-                budget_tokens=state.config.select_budget_tokens,
-            )
-        except Exception:
-            return []
-        return list(result) if isinstance(result, list) else []
-
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-    done = threading.Event()
-
-    def _run_select() -> None:
-        try:
-            result_box["result"] = _call_select_tools_no_sync(
-                state.hub,
-                session_id=session_id,
-                query=query_text,
-                top_k=state.config.select_top_k,
-                budget_tokens=state.config.select_budget_tokens,
-            )
-        except BaseException as exc:  # noqa: BLE001
-            error_box["error"] = exc
-        finally:
-            done.set()
-
-    worker = threading.Thread(target=_run_select, daemon=True)
-    worker.start()
-    if not done.wait(timeout=timeout):
-        return []
-    if error_box:
-        return []
-    result = result_box.get("result")
-    return list(result) if isinstance(result, list) else []
-
-
-def _call_select_tools_no_sync(
-    hub: ToolRouterHub,
-    *,
-    session_id: str,
-    query: str,
-    top_k: int,
-    budget_tokens: int,
-) -> list[str]:
-    try:
-        return hub.select_tools(
-            session_id=session_id,
-            query=query,
-            top_k=top_k,
-            budget_tokens=budget_tokens,
-            sync=False,
-        )
-    except TypeError:
-        return hub.select_tools(
-            session_id=session_id,
-            query=query,
-            top_k=top_k,
-            budget_tokens=budget_tokens,
-        )
 
 
 def _query_text_from_parts(parts: Any) -> str:
@@ -440,9 +370,6 @@ def _load_gateway_config() -> GatewayConfig:
         request_timeout_sec=float(os.environ.get("ROUTER_GATEWAY_TIMEOUT_SEC", "15")),
         stream_timeout_sec=float(
             os.environ.get("ROUTER_GATEWAY_STREAM_TIMEOUT_SEC", "0")
-        ),
-        select_timeout_sec=float(
-            os.environ.get("ROUTER_GATEWAY_SELECT_TIMEOUT_SEC", "2")
         ),
         select_top_k=int(os.environ.get("ROUTER_GATEWAY_TOP_K", "20")),
         select_budget_tokens=int(

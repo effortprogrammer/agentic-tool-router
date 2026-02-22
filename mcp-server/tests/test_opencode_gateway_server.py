@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
-import time
 import sys
 import threading
 import types
@@ -85,7 +84,6 @@ class GatewayServerTests(unittest.TestCase):
                 upstream_url="http://127.0.0.1:4096",
                 request_timeout_sec=5,
                 stream_timeout_sec=0,
-                select_timeout_sec=2,
                 select_top_k=20,
                 select_budget_tokens=1500,
                 default_session_id="default",
@@ -122,41 +120,6 @@ class GatewayServerTests(unittest.TestCase):
                 {"Accept": "text/event-stream"},
             )
         )
-
-    def test_select_timeout_fails_open_without_hang(self) -> None:
-        class _SlowHub:
-            def select_tools(self, **kwargs):
-                _ = kwargs
-                time.sleep(0.2)
-                return ["opencode-native:read"]
-
-        state = _gateway._GatewayState(
-            hub=_SlowHub(),
-            config=_gateway.GatewayConfig(
-                bind_host="127.0.0.1",
-                bind_port=4141,
-                upstream_url="http://127.0.0.1:4096",
-                request_timeout_sec=5,
-                stream_timeout_sec=0,
-                select_timeout_sec=0.01,
-                select_top_k=20,
-                select_budget_tokens=1500,
-                default_session_id="default",
-                max_runtime_ids_cache_sec=3,
-            ),
-            lock=threading.Lock(),
-        )
-        body = {"parts": [{"type": "text", "text": "hello"}]}
-        start = time.time()
-        patched = _gateway._inject_tools_allowlist(
-            state,
-            "/session/ses_123/message",
-            {},
-            json.dumps(body).encode("utf-8"),
-        )
-        elapsed = time.time() - start
-        self.assertLess(elapsed, 0.15)
-        self.assertEqual(patched.decode("utf-8"), json.dumps(body))
 
 
 if __name__ == "__main__":

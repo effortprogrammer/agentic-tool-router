@@ -52,7 +52,7 @@ def apply_router_config(
     router_entry.update(
         {
             "type": "local",
-            "enabled": False,
+            "enabled": True,
             "command": resolved_cmd,
         }
     )
@@ -143,7 +143,7 @@ def main() -> int:
     router_entry.update(
         {
             "type": "local",
-            "enabled": False,
+            "enabled": True,
             "command": resolved_cmd,
         }
     )

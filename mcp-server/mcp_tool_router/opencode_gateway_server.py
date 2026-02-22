@@ -131,13 +131,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {
-                            "transfer-encoding",
-                            "connection",
-                            "content-length",
-                            "date",
-                            "server",
-                        }:
+                        if low in {"transfer-encoding", "connection", "content-length"}:
                             continue
                         self.send_header(key, value)
                     self.end_headers()
@@ -158,13 +152,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {
-                            "transfer-encoding",
-                            "connection",
-                            "content-length",
-                            "date",
-                            "server",
-                        }:
+                        if low in {"transfer-encoding", "connection"}:
                             continue
                         self.send_header(key, value)
                     self.send_header("Content-Length", str(len(payload)))
@@ -176,13 +164,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             self.send_response(exc.code)
             for key, value in exc.headers.items() if exc.headers else []:
                 low = key.lower()
-                if low in {
-                    "transfer-encoding",
-                    "connection",
-                    "content-length",
-                    "date",
-                    "server",
-                }:
+                if low in {"transfer-encoding", "connection"}:
                     continue
                 self.send_header(key, value)
             self.send_header("Content-Length", str(len(payload)))
@@ -211,8 +193,6 @@ def _is_session_message_path(path: str) -> bool:
 def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
-    if method.upper() == "POST" and _is_session_message_path(path):
-        return False
     if path == "/event":
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""

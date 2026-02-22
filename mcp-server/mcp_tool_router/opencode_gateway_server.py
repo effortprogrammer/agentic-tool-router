@@ -171,6 +171,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     if payload:
                         self.wfile.write(payload)
+                    self.wfile.flush()
         except urlerror.HTTPError as exc:
             payload = exc.read() if exc.fp is not None else b""
             self.send_response(exc.code)
@@ -189,6 +190,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if payload:
                 self.wfile.write(payload)
+            self.wfile.flush()
         except BrokenPipeError:
             return
         except Exception as exc:
@@ -201,6 +203,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+        self.wfile.flush()
 
 
 def _is_session_message_path(path: str) -> bool:

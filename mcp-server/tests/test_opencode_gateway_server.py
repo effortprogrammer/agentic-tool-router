@@ -175,6 +175,17 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
+    def test_should_not_stream_proxy_session_message_post_even_with_sse_accept(
+        self,
+    ) -> None:
+        self.assertFalse(
+            _gateway._should_stream_proxy(
+                "/session/ses_1/message",
+                {"Accept": "text/event-stream"},
+                "POST",
+            )
+        )
+
     def test_select_timeout_fails_open_without_hang(self) -> None:
         class _SlowHub:
             def select_tools(self, **kwargs):

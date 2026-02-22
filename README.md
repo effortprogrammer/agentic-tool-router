@@ -35,7 +35,6 @@ npx mcpflow-router opencode install
 
 # 2. Start OpenCode — it auto-loads mcpflow-router
 # (no manual config needed!)
-# Important: run `opencode` as your normal user (not with sudo)
 
 # 3. Verify it works
 opencode mcp list
@@ -55,9 +54,9 @@ through OpenCode session APIs.
 
 Requires OpenCode `1.2.10+`.
 
-`npx mcpflow-router opencode install` automatically wires your `opencode`
-launcher so bare `opencode` uses router gateway mode. No extra user setup is
-required.
+`npx mcpflow-router opencode install` now also installs a managed `opencode`
+launcher shim (with backup) that makes bare `opencode` start through router
+gateway mode automatically.
 
 For full per-message reduction across OpenCode built-ins and MCP tools, gateway
 mode is started automatically by that launcher. Manual run is still available:

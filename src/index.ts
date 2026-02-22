@@ -186,17 +186,6 @@ function installTarget(target: InstallTarget, args: string[]): void {
   if (profile.postInstallHook) {
     profile.postInstallHook(options.createBackup);
   }
-
-  if (target === "opencode") {
-    if (isRunningAsRootViaSudo()) {
-      console.warn(
-        "[mcpflow] Detected sudo install. For normal OpenCode usage, run `opencode` without sudo.",
-      );
-    }
-    console.log(
-      "[mcpflow] OpenCode is ready. Just run `opencode` (no extra gateway/shim command needed).",
-    );
-  }
 }
 
 function isInstallTarget(value: string): value is InstallTarget {
@@ -462,11 +451,6 @@ function buildOpencodeShim(realBinaryPath: string): string {
     "#!/usr/bin/env bash",
     marker,
     "set -euo pipefail",
-    "if [[ \"${MCPFLOW_NOSUDO_REEXEC:-0}\" != \"1\" && ${EUID:-$(id -u)} -eq 0 && -n \"${SUDO_USER:-}\" ]]; then",
-    "  if command -v sudo >/dev/null 2>&1; then",
-    "    exec env MCPFLOW_NOSUDO_REEXEC=1 sudo -u \"$SUDO_USER\" -H \"$0\" \"$@\"",
-    "  fi",
-    "fi",
     "REAL_OPENCODE=" + quotedReal,
     "GATEWAY_HOST=${ROUTER_GATEWAY_BIND:-127.0.0.1}",
     "GATEWAY_PORT=${ROUTER_GATEWAY_PORT:-4141}",
@@ -634,10 +618,6 @@ function findMonorepoRoot(): string | null {
   return null;
 }
 
-function isRunningAsRootViaSudo(): boolean {
-  return typeof process.getuid === "function" && process.getuid() === 0 && !!process.env.SUDO_USER;
-}
-
 function findPython(): string | null {
   for (const cmd of ["python3", "python"]) {
     const r = spawnSync(cmd, ["--version"], { stdio: "pipe" });
@@ -667,9 +647,6 @@ function printHelp(): void {
       "  --disable-others          Disable all other MCP entries (default)",
       "  --no-backup               Do not create a .bak backup",
       "  --dry-run                 Print changes without writing",
-      "",
-      "OpenCode note:",
-      "  After `opencode install`, just run `opencode` (without sudo).",
     ].join("\n"),
   );
 }

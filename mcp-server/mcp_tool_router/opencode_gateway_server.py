@@ -183,7 +183,9 @@ def _is_session_message_path(path: str) -> bool:
     return len(parts) == 3 and parts[0] == "session" and parts[2] == "message"
 
 
-def _should_stream_proxy(path: str, headers: dict[str, str], method: str = "GET") -> bool:
+def _should_stream_proxy(
+    path: str, headers: dict[str, str], method: str = "GET"
+) -> bool:
     if path == "/event":
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
@@ -222,8 +224,15 @@ def _inject_tools_allowlist(
 
     session_id = _session_id_from_path(path) or state.config.default_session_id
     selected = _select_tools_with_timeout(state, session_id, query_text)
-    if not selected:
+    if selected is None:
         return raw_body
+
+    if not selected:
+        payload["tools"] = {}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
         _runtime_tool_ids(state, _first(query.get("directory"))),
@@ -250,11 +259,11 @@ def _select_tools_with_timeout(
     state: _GatewayState,
     session_id: str,
     query_text: str,
-) -> list[str]:
+) -> list[str] | None:
     timeout = state.config.select_timeout_sec
     if timeout <= 0:
         try:
-            result = _call_select_tools_no_sync(
+            result = _call_select_tools_prefer_sync(
                 state.hub,
                 session_id=session_id,
                 query=query_text,
@@ -262,7 +271,7 @@ def _select_tools_with_timeout(
                 budget_tokens=state.config.select_budget_tokens,
             )
         except Exception:
-            return []
+            return None
         return list(result) if isinstance(result, list) else []
 
     result_box: dict[str, Any] = {}
@@ -271,7 +280,7 @@ def _select_tools_with_timeout(
 
     def _run_select() -> None:
         try:
-            result_box["result"] = _call_select_tools_no_sync(
+            result_box["result"] = _call_select_tools_prefer_sync(
                 state.hub,
                 session_id=session_id,
                 query=query_text,
@@ -286,14 +295,14 @@ def _select_tools_with_timeout(
     worker = threading.Thread(target=_run_select, daemon=True)
     worker.start()
     if not done.wait(timeout=timeout):
-        return []
+        return None
     if error_box:
-        return []
+        return None
     result = result_box.get("result")
     return list(result) if isinstance(result, list) else []
 
 
-def _call_select_tools_no_sync(
+def _call_select_tools_prefer_sync(
     hub: ToolRouterHub,
     *,
     session_id: str,
@@ -307,15 +316,24 @@ def _call_select_tools_no_sync(
             query=query,
             top_k=top_k,
             budget_tokens=budget_tokens,
-            sync=False,
+            sync=True,
         )
     except TypeError:
-        return hub.select_tools(
-            session_id=session_id,
-            query=query,
-            top_k=top_k,
-            budget_tokens=budget_tokens,
-        )
+        try:
+            return hub.select_tools(
+                session_id=session_id,
+                query=query,
+                top_k=top_k,
+                budget_tokens=budget_tokens,
+                sync=False,
+            )
+        except TypeError:
+            return hub.select_tools(
+                session_id=session_id,
+                query=query,
+                top_k=top_k,
+                budget_tokens=budget_tokens,
+            )
 
 
 def _query_text_from_parts(parts: Any) -> str:

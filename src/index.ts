@@ -521,11 +521,120 @@ function parsePossiblyJsonc(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    const noBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
-    const noLine = noBlock.replace(/(^|[^:])\/\/.*$/gm, "$1");
-    const noTrailing = noLine.replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(noTrailing);
+    const withoutComments = stripJsonComments(raw);
+    const withoutTrailing = stripTrailingCommas(withoutComments);
+    return JSON.parse(withoutTrailing);
   }
+}
+
+function stripJsonComments(input: string): string {
+  let out = "";
+  let inString = false;
+  let quote = '"';
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    const next = i + 1 < input.length ? input[i + 1] : "";
+
+    if (inLineComment) {
+      if (ch === "\n") {
+        inLineComment = false;
+        out += ch;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      quote = ch;
+      out += ch;
+      continue;
+    }
+
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
+function stripTrailingCommas(input: string): string {
+  let out = "";
+  let inString = false;
+  let quote = '"';
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      quote = ch;
+      out += ch;
+      continue;
+    }
+
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < input.length && /\s/.test(input.charAt(j))) {
+        j += 1;
+      }
+      const nextCh = input.charAt(j);
+      if (j < input.length && (nextCh === "}" || nextCh === "]")) {
+        continue;
+      }
+    }
+
+    out += ch;
+  }
+
+  return out;
 }
 
 function safeReadText(filePath: string): string | null {

@@ -21,6 +21,7 @@ class GatewayConfig:
     bind_port: int
     upstream_url: str
     request_timeout_sec: float
+    stream_timeout_sec: float
     select_top_k: int
     select_budget_tokens: int
     default_session_id: str
@@ -105,22 +106,45 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             headers=headers,
         )
 
+        is_stream = _should_stream_proxy(path, headers)
+
         try:
+            timeout = (
+                state.config.stream_timeout_sec
+                if is_stream
+                else state.config.request_timeout_sec
+            )
+            timeout_value = None if timeout <= 0 else timeout
             with urlrequest.urlopen(
                 request_obj,
-                timeout=state.config.request_timeout_sec,
+                timeout=timeout_value,
             ) as response:
-                payload = response.read()
-                self.send_response(response.status)
-                for key, value in response.getheaders():
-                    low = key.lower()
-                    if low in {"transfer-encoding", "connection"}:
-                        continue
-                    self.send_header(key, value)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                if payload:
-                    self.wfile.write(payload)
+                if is_stream:
+                    self.send_response(response.status)
+                    for key, value in response.getheaders():
+                        low = key.lower()
+                        if low in {"transfer-encoding", "connection", "content-length"}:
+                            continue
+                        self.send_header(key, value)
+                    self.end_headers()
+                    while True:
+                        chunk = response.read(8192)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                else:
+                    payload = response.read()
+                    self.send_response(response.status)
+                    for key, value in response.getheaders():
+                        low = key.lower()
+                        if low in {"transfer-encoding", "connection"}:
+                            continue
+                        self.send_header(key, value)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    if payload:
+                        self.wfile.write(payload)
         except urlerror.HTTPError as exc:
             payload = exc.read() if exc.fp is not None else b""
             self.send_response(exc.code)
@@ -133,6 +157,8 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if payload:
                 self.wfile.write(payload)
+        except BrokenPipeError:
+            return
         except Exception as exc:
             self._write_json(502, {"error": f"gateway proxy failed: {exc}"})
 
@@ -148,6 +174,13 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 def _is_session_message_path(path: str) -> bool:
     parts = [segment for segment in path.split("/") if segment]
     return len(parts) == 3 and parts[0] == "session" and parts[2] == "message"
+
+
+def _should_stream_proxy(path: str, headers: dict[str, str]) -> bool:
+    if path == "/event":
+        return True
+    accept = headers.get("Accept") or headers.get("accept") or ""
+    return "text/event-stream" in accept.lower()
 
 
 def _session_id_from_path(path: str) -> str | None:
@@ -335,6 +368,9 @@ def _load_gateway_config() -> GatewayConfig:
         bind_port=bind_port,
         upstream_url=upstream_url.rstrip("/"),
         request_timeout_sec=float(os.environ.get("ROUTER_GATEWAY_TIMEOUT_SEC", "15")),
+        stream_timeout_sec=float(
+            os.environ.get("ROUTER_GATEWAY_STREAM_TIMEOUT_SEC", "0")
+        ),
         select_top_k=int(os.environ.get("ROUTER_GATEWAY_TOP_K", "20")),
         select_budget_tokens=int(
             os.environ.get("ROUTER_GATEWAY_BUDGET_TOKENS", "1500")

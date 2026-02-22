@@ -83,7 +83,6 @@ class GatewayServerTests(unittest.TestCase):
                 bind_port=4141,
                 upstream_url="http://127.0.0.1:4096",
                 request_timeout_sec=5,
-                stream_timeout_sec=0,
                 select_top_k=20,
                 select_budget_tokens=1500,
                 default_session_id="default",
@@ -109,17 +108,6 @@ class GatewayServerTests(unittest.TestCase):
 
         parsed = json.loads(patched.decode("utf-8"))
         self.assertEqual(parsed["tools"], {"read": True})
-
-    def test_should_stream_proxy_event_path(self) -> None:
-        self.assertTrue(_gateway._should_stream_proxy("/event", {}))
-
-    def test_should_stream_proxy_accept_header(self) -> None:
-        self.assertTrue(
-            _gateway._should_stream_proxy(
-                "/session/ses_1/message",
-                {"Accept": "text/event-stream"},
-            )
-        )
 
 
 if __name__ == "__main__":

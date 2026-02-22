@@ -143,7 +143,7 @@ function installTarget(target: InstallTarget, args: string[]): void {
       ? { ...(existing as JsonObject) }
       : {};
   routerEntry.type = "local";
-  routerEntry.enabled = true;
+  routerEntry.enabled = target === "opencode" ? false : true;
   routerEntry.command = resolved.command;
 
   if (Object.keys(resolved.env).length > 0) {

@@ -14,15 +14,15 @@ mcpflow-router sits between OpenCode and your MCP servers, exposing only **3 met
 
 | Tool                  | Purpose                                            |
 | --------------------- | -------------------------------------------------- |
-| `select_tools`        | Search for relevant tools by query |
-| `call_tool`           | Call a tool by `{serverId}:{toolName}`             |
-| `tool_info`           | Inspect a tool's full schema before calling it     |
+| `router_select_tools` | Search for relevant tools by query |
+| `router_call_tool`    | Call a tool by `{serverId}:{toolName}`             |
+| `router_tool_info`    | Inspect a tool's full schema before calling it     |
 
 ```
 User: "Create a GitHub PR"
-  → OpenCode calls: select_tools({ query: "github pull request" })
+  → OpenCode calls: router_select_tools({ query: "github pull request" })
   → Router returns: [{ toolId: "github:create_pull_request", ... }]
-  → OpenCode calls: call_tool({ toolId: "github:create_pull_request", arguments: {...} })
+  → OpenCode calls: router_call_tool({ toolId: "github:create_pull_request", arguments: {...} })
 ```
 
 ## Quick Start
@@ -53,13 +53,6 @@ HTTP endpoints, indexes them as `opencode-native:*`, and executes selected tools
 through OpenCode session APIs.
 
 Requires OpenCode `1.2.10+`.
-
-For full per-message reduction across OpenCode built-ins and MCP tools, use
-gateway mode:
-
-```bash
-python -m mcp_tool_router.opencode_gateway_server
-```
 
 ### Install from Source
 

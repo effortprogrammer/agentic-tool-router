@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -440,7 +439,6 @@ class _ConfigWatcher(threading.Thread):
 
 def main() -> int:
     hub, config_path, include_disabled, ignore_ids, routerd_cmd = _load_hub()
-    gateway_proc = _maybe_start_gateway_process()
     interval = _coerce_int(os.environ.get("ROUTER_WATCH_INTERVAL"), 1)
     watcher = _ConfigWatcher(
         hub,
@@ -457,57 +455,8 @@ def main() -> int:
         server.serve()
     finally:
         watcher.stop()
-        _stop_gateway_process(gateway_proc)
         hub.close()
     return 0
-
-
-def _maybe_start_gateway_process() -> subprocess.Popen[Any] | None:
-    enabled = os.environ.get("ROUTER_GATEWAY_AUTOSTART", "true").lower()
-    if enabled in {"0", "false", "no"}:
-        return None
-
-    bind = os.environ.get("ROUTER_GATEWAY_BIND", "127.0.0.1")
-    port = os.environ.get("ROUTER_GATEWAY_PORT", "4141")
-
-    env = dict(os.environ)
-    env["ROUTER_GATEWAY_AUTOSTART"] = "false"
-    if "ROUTER_OPENCODE_UPSTREAM_URL" not in env and env.get("OPENCODE_SERVER_URL"):
-        env["ROUTER_OPENCODE_UPSTREAM_URL"] = str(env["OPENCODE_SERVER_URL"])
-
-    cmd = [sys.executable, "-m", "mcp_tool_router.opencode_gateway_server"]
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        print(
-            f"[mcp-tool-router] gateway autostart enabled at http://{bind}:{port}",
-            file=sys.stderr,
-        )
-        return proc
-    except Exception as exc:
-        print(
-            f"[mcp-tool-router] Warning: failed to autostart gateway: {exc}",
-            file=sys.stderr,
-        )
-        return None
-
-
-def _stop_gateway_process(proc: subprocess.Popen[Any] | None) -> None:
-    if proc is None:
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=3)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            return
 
 
 if __name__ == "__main__":

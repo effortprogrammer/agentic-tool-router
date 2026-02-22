@@ -625,10 +625,7 @@ def _call_opencode_native_tool(
 ) -> dict:
     tool_id = host_tool.opencode_tool_id or host_tool.name
     base_url = _resolve_opencode_server_url()
-    configured_timeout = _float_env("ROUTER_OPENCODE_NATIVE_TIMEOUT", 120.0)
-    timeout = configured_timeout
-    if host_tool.timeout_sec and host_tool.timeout_sec > timeout:
-        timeout = host_tool.timeout_sec
+    timeout = _float_env("ROUTER_OPENCODE_NATIVE_TIMEOUT", 20.0)
     directory = os.environ.get("ROUTER_OPENCODE_DIRECTORY") or None
     session_id = _create_opencode_session(
         base_url, timeout=timeout, directory=directory
@@ -701,9 +698,8 @@ def _http_json(
     req = urlrequest.Request(
         full_url, data=data, method=method.upper(), headers=headers
     )
-    timeout_value: float | None = None if timeout <= 0 else timeout
     try:
-        with urlrequest.urlopen(req, timeout=timeout_value) as resp:
+        with urlrequest.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
     except (urlerror.URLError, TimeoutError) as exc:
         raise RuntimeError(

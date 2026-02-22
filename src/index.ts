@@ -477,7 +477,11 @@ function removeRouterFromOpencodeOverlayConfigs(
   const home = os.homedir();
   const candidates = [
     path.join(home, ".opencode", "opencode.json"),
+    path.join(home, ".opencode", "opencode.jsonc"),
     path.join(home, ".config", "opencode", "opencode.json"),
+    path.join(home, ".config", "opencode", "opencode.jsonc"),
+    path.join(home, ".config", "opencode", "profiles", "default", "opencode.jsonc"),
+    path.join(home, ".config", "opencode", "profiles", "omo", "opencode.jsonc"),
   ];
   for (const filePath of candidates) {
     if (!fs.existsSync(filePath)) {
@@ -485,7 +489,7 @@ function removeRouterFromOpencodeOverlayConfigs(
     }
     try {
       const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
+      const parsed = parsePossiblyJsonc(raw);
       if (
         typeof parsed !== "object" ||
         parsed === null ||
@@ -510,6 +514,17 @@ function removeRouterFromOpencodeOverlayConfigs(
     } catch {
       continue;
     }
+  }
+}
+
+function parsePossiblyJsonc(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const noBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+    const noLine = noBlock.replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const noTrailing = noLine.replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(noTrailing);
   }
 }
 
@@ -586,11 +601,14 @@ function buildOpencodeShim(
     "      ;;",
     "  esac",
     "fi",
-    "if ! lsof -nP -iTCP:4096 -sTCP:LISTEN >/dev/null 2>&1; then",
-    "  \"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
-    "  server_pid=$!",
-    "  started_server=1",
+    "existing_server_pids=$(lsof -tiTCP:4096 -sTCP:LISTEN 2>/dev/null || true)",
+    "if [[ -n \"$existing_server_pids\" ]]; then",
+    "  kill $existing_server_pids >/dev/null 2>&1 || true",
+    "  sleep 0.1",
     "fi",
+    "\"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
+    "server_pid=$!",
+    "started_server=1",
     "existing_gateway_pids=$(lsof -tiTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN 2>/dev/null || true)",
     "if [[ -n \"$existing_gateway_pids\" ]]; then",
     "  kill $existing_gateway_pids >/dev/null 2>&1 || true",

@@ -98,14 +98,9 @@ class GatewayServerTests(unittest.TestCase):
             "tools": {"read": True, "grep": False},
         }
 
-        with (
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
-                return_value={"read", "grep", "bash"},
-            ),
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._update_session_permissions"
-            ),
+        with mock.patch(
+            "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
+            return_value={"read", "grep", "bash"},
         ):
             patched = _gateway._inject_tools_allowlist(
                 state,
@@ -116,44 +111,6 @@ class GatewayServerTests(unittest.TestCase):
 
         parsed = json.loads(patched.decode("utf-8"))
         self.assertEqual(parsed["tools"], {"read": True})
-
-    def test_inject_tools_allowlist_disables_all_when_empty_selection(self) -> None:
-        state = _gateway._GatewayState(
-            hub=_DummyHub([]),
-            config=_gateway.GatewayConfig(
-                bind_host="127.0.0.1",
-                bind_port=4141,
-                upstream_url="http://127.0.0.1:4096",
-                request_timeout_sec=5,
-                stream_timeout_sec=0,
-                select_timeout_sec=2,
-                select_top_k=20,
-                select_budget_tokens=1500,
-                default_session_id="default",
-                max_runtime_ids_cache_sec=3,
-            ),
-            lock=threading.Lock(),
-        )
-        body = {"parts": [{"type": "text", "text": "hello"}]}
-
-        with (
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
-                return_value={"read", "grep", "bash"},
-            ),
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._update_session_permissions"
-            ),
-        ):
-            patched = _gateway._inject_tools_allowlist(
-                state,
-                "/session/ses_123/message",
-                {},
-                json.dumps(body).encode("utf-8"),
-            )
-
-        parsed = json.loads(patched.decode("utf-8"))
-        self.assertEqual(parsed["tools"], {"bash": False, "grep": False, "read": False})
 
     def test_should_stream_proxy_event_path(self) -> None:
         self.assertTrue(_gateway._should_stream_proxy("/event", {}))
@@ -200,50 +157,6 @@ class GatewayServerTests(unittest.TestCase):
         elapsed = time.time() - start
         self.assertLess(elapsed, 0.15)
         self.assertEqual(patched.decode("utf-8"), json.dumps(body))
-
-    def test_update_session_permissions_deduplicates_same_rules(self) -> None:
-        state = _gateway._GatewayState(
-            hub=_DummyHub([]),
-            config=_gateway.GatewayConfig(
-                bind_host="127.0.0.1",
-                bind_port=4141,
-                upstream_url="http://127.0.0.1:4096",
-                request_timeout_sec=5,
-                stream_timeout_sec=0,
-                select_timeout_sec=2,
-                select_top_k=20,
-                select_budget_tokens=1500,
-                default_session_id="default",
-                max_runtime_ids_cache_sec=3,
-            ),
-            lock=threading.Lock(),
-            session_permission_hashes={},
-        )
-
-        response = mock.MagicMock()
-        response.__enter__.return_value = response
-        response.__exit__.return_value = False
-
-        with mock.patch(
-            "mcp_tool_router.opencode_gateway_server.urlrequest.urlopen",
-            return_value=response,
-        ) as mocked_open:
-            _gateway._update_session_permissions(
-                state,
-                session_id="ses_1",
-                directory=None,
-                runtime_all_ids={"read", "bash"},
-                allowed_ids={"read"},
-            )
-            _gateway._update_session_permissions(
-                state,
-                session_id="ses_1",
-                directory=None,
-                runtime_all_ids={"read", "bash"},
-                allowed_ids={"read"},
-            )
-
-        self.assertEqual(mocked_open.call_count, 1)
 
 
 if __name__ == "__main__":

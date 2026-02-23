@@ -172,10 +172,27 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                 )
                 if do_stream:
                     self.send_response(response.status)
+                    # urllib's addinfourl lacks read1(); unwrap to the
+                    # underlying http.client.HTTPResponse for it.
+                    # IMPORTANT: fp.read1() returns RAW socket bytes
+                    # including chunked-encoding frames, so we MUST
+                    # pass Transfer-Encoding through to the client.
+                    _reader = response
+                    _raw_mode = False
+                    try:
+                        _fp = response.fp
+                        if hasattr(_fp, "read1"):
+                            _reader = _fp
+                            _raw_mode = True
+                    except AttributeError:
+                        pass
                     for key, value in response.getheaders():
                         low = key.lower()
+                        if low == "transfer-encoding":
+                            if _raw_mode:
+                                self.send_header(key, value)
+                            continue
                         if low in {
-                            "transfer-encoding",
                             "connection",
                             "content-length",
                             "date",
@@ -185,17 +202,6 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.send_header(key, value)
                     self.send_header("Connection", "close")
                     self.end_headers()
-                    # urllib's addinfourl wrapper lacks read1(); unwrap to
-                    # the underlying http.client.HTTPResponse which has it.
-                    # read1() is critical: read(n) with chunked encoding
-                    # blocks until n bytes accumulate, starving SSE events.
-                    _reader = response
-                    try:
-                        _fp = response.fp
-                        if hasattr(_fp, "read1"):
-                            _reader = _fp
-                    except AttributeError:
-                        pass
                     _chunk_n = 0
                     while True:
                         try:

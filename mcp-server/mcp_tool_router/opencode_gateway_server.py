@@ -113,10 +113,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                 "POST %s msg body (%d bytes): %s",
                 path, len(raw_body), raw_body[:500],
             )
-            # DISABLED: tool injection adds a "tools" field that opencode
-            # does not recognize, causing messages to be silently dropped
-            # (200 OK returned but no message events generated in SSE).
-            # TODO: find the correct opencode API for tool permissions.
+            body_bytes = _inject_tools_allowlist(state, path, query, raw_body)
 
         upstream = state.config.upstream_url.rstrip("/") + self.path
         headers: dict[str, str] = {}

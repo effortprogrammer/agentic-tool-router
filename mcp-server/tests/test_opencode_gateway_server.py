@@ -259,6 +259,76 @@ class GatewayServerTests(unittest.TestCase):
 
         self.assertEqual(mocked_open.call_count, 1)
 
+    def test_should_not_stream_proxy_prompt_post(self) -> None:
+        self.assertFalse(
+            _gateway._should_stream_proxy(
+                "/session/ses_1/prompt",
+                {},
+                "POST",
+            )
+        )
+
+    def test_should_not_stream_proxy_prompt_post_even_with_sse_accept(self) -> None:
+        self.assertFalse(
+            _gateway._should_stream_proxy(
+                "/session/ses_1/prompt",
+                {"Accept": "text/event-stream"},
+                "POST",
+            )
+        )
+
+    def test_inject_tools_allowlist_prompt_body_fallback(self) -> None:
+        state = _gateway._GatewayState(
+            hub=_DummyHub(["opencode-native:read", "opencode-native:grep"]),
+            config=_gateway.GatewayConfig(
+                bind_host="127.0.0.1",
+                bind_port=4141,
+                upstream_url="http://127.0.0.1:4096",
+                request_timeout_sec=5,
+                stream_timeout_sec=0,
+                select_timeout_sec=2,
+                select_top_k=20,
+                select_budget_tokens=1500,
+                default_session_id="default",
+                max_runtime_ids_cache_sec=3,
+            ),
+            lock=threading.Lock(),
+        )
+        body = {"prompt": "read file"}
+
+        with mock.patch(
+            "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
+            return_value={"read", "grep", "bash"},
+        ):
+            patched = _gateway._inject_tools_allowlist(
+                state,
+                "/session/ses_123/prompt",
+                {},
+                json.dumps(body).encode("utf-8"),
+            )
+
+        parsed = json.loads(patched.decode("utf-8"))
+        self.assertEqual(parsed["tools"], {"bash": False, "grep": True, "read": True})
+
+    def test_is_session_message_path_prompt(self) -> None:
+        self.assertTrue(_gateway._is_session_message_path("/session/ses_1/prompt"))
+
+    def test_is_session_message_path_message(self) -> None:
+        self.assertTrue(_gateway._is_session_message_path("/session/ses_1/message"))
+
+    def test_is_session_message_path_other(self) -> None:
+        self.assertFalse(_gateway._is_session_message_path("/session/ses_1/event"))
+
+    def test_session_id_from_path_prompt(self) -> None:
+        self.assertEqual(
+            _gateway._session_id_from_path("/session/ses_1/prompt"), "ses_1"
+        )
+
+    def test_session_id_from_path_message(self) -> None:
+        self.assertEqual(
+            _gateway._session_id_from_path("/session/ses_1/message"), "ses_1"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

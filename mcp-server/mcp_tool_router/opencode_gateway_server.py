@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
+import traceback
 from typing import Any
 import sys
 from urllib import error as urlerror
@@ -14,6 +16,33 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from .hub import ToolRouterHub, _resolve_opencode_server_url
+
+
+def _setup_logging() -> logging.Logger:
+    logger = logging.getLogger("mcpflow-gateway")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.DEBUG)
+    log_path = os.environ.get(
+        "ROUTER_GATEWAY_LOG",
+        os.path.join(os.environ.get("TMPDIR", "/tmp"), "mcpflow-gateway.log"),
+    )
+    try:
+        handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        logger.addHandler(handler)
+    except Exception:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        logger.addHandler(handler)
+    return logger
+
+
+_log = _setup_logging()
 
 
 @dataclass
@@ -111,6 +140,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
         is_stream = _should_stream_proxy(path, headers, method)
         is_message_post = method.upper() == "POST" and _is_session_message_path(path)
+        _log.debug("%s %s -> upstream %s (stream=%s msg_post=%s)", method, self.path, upstream, is_stream, is_message_post)
 
         try:
             timeout = (
@@ -140,6 +170,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         }:
                             continue
                         self.send_header(key, value)
+                    self.send_header("Connection", "close")
                     self.end_headers()
                     while True:
                         # read1() returns immediately with available data
@@ -194,6 +225,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             return
         except Exception as exc:
+            _log.error("proxy failed: %s %s -> %s", method, self.path, exc, exc_info=True)
             self._write_json(502, {"error": f"gateway proxy failed: {exc}"})
 
     def _write_json(self, status: int, payload: dict[str, Any]) -> None:
@@ -208,7 +240,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
 def _is_session_message_path(path: str) -> bool:
     parts = [segment for segment in path.split("/") if segment]
-    return len(parts) == 3 and parts[0] == "session" and parts[2] == "message"
+    return len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}
 
 
 def _should_stream_proxy(
@@ -226,7 +258,7 @@ def _should_stream_proxy(
 
 def _session_id_from_path(path: str) -> str | None:
     parts = [segment for segment in path.split("/") if segment]
-    if len(parts) == 3 and parts[0] == "session" and parts[2] == "message":
+    if len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}:
         return parts[1]
     return None
 
@@ -245,6 +277,11 @@ def _inject_tools_allowlist(
         return raw_body
 
     query_text = _query_text_from_parts(payload.get("parts"))
+    if not query_text:
+        # opencode uses {"prompt": "..."} for /session/{id}/prompt
+        prompt_val = payload.get("prompt")
+        if isinstance(prompt_val, str) and prompt_val.strip():
+            query_text = prompt_val.strip()
     if not query_text:
         return raw_body
 

@@ -207,10 +207,11 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         _chunk_n += 1
-                        if _chunk_n == 1:
+                        if _chunk_n <= 5 or _chunk_n % 100 == 0:
                             _log.debug(
-                                "%s %s first chunk (%d bytes)",
-                                method, self.path, len(chunk),
+                                "%s %s chunk #%d (%d bytes)%s",
+                                method, self.path, _chunk_n, len(chunk),
+                                " " + repr(chunk[:120]) if _chunk_n <= 3 else "",
                             )
                     _log.debug(
                         "%s %s stream ended, %d chunks", method, self.path, _chunk_n
@@ -261,6 +262,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             self.wfile.flush()
         except BrokenPipeError:
+            _log.debug("%s %s client disconnected", method, self.path)
             return
         except Exception as exc:
             _log.error(

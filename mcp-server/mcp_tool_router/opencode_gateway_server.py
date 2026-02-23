@@ -185,13 +185,21 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.send_header(key, value)
                     self.send_header("Connection", "close")
                     self.end_headers()
+                    # urllib's addinfourl wrapper lacks read1(); unwrap to
+                    # the underlying http.client.HTTPResponse which has it.
+                    # read1() is critical: read(n) with chunked encoding
+                    # blocks until n bytes accumulate, starving SSE events.
+                    _reader = response
+                    try:
+                        _fp = response.fp
+                        if hasattr(_fp, "read1"):
+                            _reader = _fp
+                    except AttributeError:
+                        pass
                     _chunk_n = 0
                     while True:
-                        # read1() returns immediately with available data
-                        # instead of blocking until 8192 bytes accumulate.
-                        # Critical for SSE and long-lived streaming responses.
                         try:
-                            chunk = response.read1(8192)
+                            chunk = _reader.read1(8192)
                         except AttributeError:
                             chunk = response.read(8192)
                         if not chunk:
@@ -199,6 +207,11 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         _chunk_n += 1
+                        if _chunk_n == 1:
+                            _log.debug(
+                                "%s %s first chunk (%d bytes)",
+                                method, self.path, len(chunk),
+                            )
                     _log.debug(
                         "%s %s stream ended, %d chunks", method, self.path, _chunk_n
                     )

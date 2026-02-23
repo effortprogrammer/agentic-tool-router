@@ -29,15 +29,11 @@ def _setup_logging() -> logging.Logger:
     )
     try:
         handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         logger.addHandler(handler)
     except Exception:
         handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         logger.addHandler(handler)
     return logger
 
@@ -140,7 +136,14 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
         is_stream = _should_stream_proxy(path, headers, method)
         is_message_post = method.upper() == "POST" and _is_session_message_path(path)
-        _log.debug("%s %s -> upstream %s (stream=%s msg_post=%s)", method, self.path, upstream, is_stream, is_message_post)
+        _log.debug(
+            "%s %s -> upstream %s (stream=%s msg_post=%s)",
+            method,
+            self.path,
+            upstream,
+            is_stream,
+            is_message_post,
+        )
 
         try:
             timeout = (
@@ -157,7 +160,17 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                 request_obj,
                 timeout=timeout_value,
             ) as response:
-                if is_stream:
+                resp_ct = response.headers.get("Content-Type", "")
+                do_stream = is_stream or "text/event-stream" in resp_ct.lower()
+                _log.debug(
+                    "%s %s <- status=%d ct=%s do_stream=%s",
+                    method,
+                    self.path,
+                    response.status,
+                    resp_ct,
+                    do_stream,
+                )
+                if do_stream:
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
@@ -172,6 +185,7 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.send_header(key, value)
                     self.send_header("Connection", "close")
                     self.end_headers()
+                    _chunk_n = 0
                     while True:
                         # read1() returns immediately with available data
                         # instead of blocking until 8192 bytes accumulate.
@@ -184,8 +198,19 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                             break
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        _chunk_n += 1
+                    _log.debug(
+                        "%s %s stream ended, %d chunks", method, self.path, _chunk_n
+                    )
                 else:
                     payload = response.read()
+                    _log.debug(
+                        "%s %s <- status=%d size=%d",
+                        method,
+                        self.path,
+                        response.status,
+                        len(payload),
+                    )
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
@@ -225,7 +250,9 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             return
         except Exception as exc:
-            _log.error("proxy failed: %s %s -> %s", method, self.path, exc, exc_info=True)
+            _log.error(
+                "proxy failed: %s %s -> %s", method, self.path, exc, exc_info=True
+            )
             self._write_json(502, {"error": f"gateway proxy failed: {exc}"})
 
     def _write_json(self, status: int, payload: dict[str, Any]) -> None:
@@ -240,7 +267,9 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
 def _is_session_message_path(path: str) -> bool:
     parts = [segment for segment in path.split("/") if segment]
-    return len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}
+    return (
+        len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}
+    )
 
 
 def _should_stream_proxy(

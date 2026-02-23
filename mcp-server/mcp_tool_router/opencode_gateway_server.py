@@ -297,8 +297,10 @@ def _is_session_message_path(path: str) -> bool:
 def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
+    # POST /message returns streaming JSON (Hono stream API);
+    # it MUST be relayed as a stream, not buffered with response.read().
     if method.upper() == "POST" and _is_session_message_path(path):
-        return False
+        return True
     if path == "/event" or path.endswith("/event"):
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""

@@ -109,6 +109,10 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
         body_bytes = raw_body
         if method.upper() == "POST" and _is_session_message_path(path):
+            _log.debug(
+                "POST %s msg body (%d bytes): %s",
+                path, len(raw_body), raw_body[:500],
+            )
             try:
                 body_bytes = _inject_tools_allowlist(
                     state,
@@ -213,11 +217,13 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         _chunk_n += 1
-                        if _chunk_n <= 5 or _chunk_n % 100 == 0:
+                        _has_msg = b'"message.' in chunk or b'"message"' in chunk
+                        if _chunk_n <= 30 or _chunk_n % 50 == 0 or _has_msg:
                             _log.debug(
-                                "%s %s chunk #%d (%d bytes)%s",
+                                "%s %s chunk #%d (%d bytes)%s%s",
                                 method, self.path, _chunk_n, len(chunk),
-                                " " + repr(chunk[:120]) if _chunk_n <= 3 else "",
+                                " [MSG]" if _has_msg else "",
+                                " " + repr(chunk[:200]) if _chunk_n <= 5 or _has_msg else "",
                             )
                     _log.debug(
                         "%s %s stream ended, %d chunks", method, self.path, _chunk_n
@@ -332,6 +338,7 @@ def _inject_tools_allowlist(
         prompt_val = payload.get("prompt")
         if isinstance(prompt_val, str) and prompt_val.strip():
             query_text = prompt_val.strip()
+    _log.debug("inject: query_text=%r", query_text[:200])
     if not query_text:
         return raw_body
 
@@ -342,6 +349,11 @@ def _inject_tools_allowlist(
 
     directory = _first(query.get("directory"))
     runtime_all_ids = _runtime_tool_ids(state, directory)
+    _log.debug(
+        "inject: selected=%s runtime_all=%d",
+        selected[:10] if selected else selected,
+        len(runtime_all_ids),
+    )
 
     if not selected:
         payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
@@ -377,6 +389,12 @@ def _inject_tools_allowlist(
     for tool_id in runtime_ids:
         tools_map[tool_id] = True
     payload["tools"] = tools_map
+    _log.debug(
+        "inject: final tools_map enabled=%d disabled=%d body_len=%d",
+        sum(1 for v in tools_map.values() if v),
+        sum(1 for v in tools_map.values() if not v),
+        len(json.dumps(payload, separators=(',', ':'), sort_keys=True)),
+    )
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 

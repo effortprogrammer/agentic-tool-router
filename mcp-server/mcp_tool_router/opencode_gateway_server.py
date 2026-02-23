@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
+import traceback
 from typing import Any
 import sys
 from urllib import error as urlerror
@@ -14,6 +16,29 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from .hub import ToolRouterHub, _resolve_opencode_server_url
+
+
+def _setup_logging() -> logging.Logger:
+    logger = logging.getLogger("mcpflow-gateway")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.DEBUG)
+    log_path = os.environ.get(
+        "ROUTER_GATEWAY_LOG",
+        os.path.join(os.environ.get("TMPDIR", "/tmp"), "mcpflow-gateway.log"),
+    )
+    try:
+        handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    except Exception:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    return logger
+
+
+_log = _setup_logging()
 
 
 @dataclass
@@ -84,15 +109,14 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
 
         body_bytes = raw_body
         if method.upper() == "POST" and _is_session_message_path(path):
-            try:
-                body_bytes = _inject_tools_allowlist(
-                    state,
-                    path,
-                    query,
-                    raw_body,
-                )
-            except Exception:
-                body_bytes = raw_body
+            _log.debug(
+                "POST %s msg body (%d bytes): %s",
+                path, len(raw_body), raw_body[:500],
+            )
+            # DISABLED: tool injection adds a "tools" field that opencode
+            # does not recognize, causing messages to be silently dropped
+            # (200 OK returned but no message events generated in SSE).
+            # TODO: find the correct opencode API for tool permissions.
 
         upstream = state.config.upstream_url.rstrip("/") + self.path
         headers: dict[str, str] = {}
@@ -110,65 +134,147 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         )
 
         is_stream = _should_stream_proxy(path, headers, method)
+        is_message_post = method.upper() == "POST" and _is_session_message_path(path)
+        _log.debug(
+            "%s %s -> upstream %s (stream=%s msg_post=%s)",
+            method,
+            self.path,
+            upstream,
+            is_stream,
+            is_message_post,
+        )
 
         try:
             timeout = (
                 state.config.stream_timeout_sec
                 if is_stream
-                else state.config.request_timeout_sec
+                else (
+                    max(state.config.request_timeout_sec, 180.0)
+                    if is_message_post
+                    else state.config.request_timeout_sec
+                )
             )
             timeout_value = None if timeout <= 0 else timeout
             with urlrequest.urlopen(
                 request_obj,
                 timeout=timeout_value,
             ) as response:
-                if is_stream:
+                resp_ct = response.headers.get("Content-Type", "")
+                do_stream = is_stream or "text/event-stream" in resp_ct.lower()
+                _log.debug(
+                    "%s %s <- status=%d ct=%s do_stream=%s",
+                    method,
+                    self.path,
+                    response.status,
+                    resp_ct,
+                    do_stream,
+                )
+                if do_stream:
                     self.send_response(response.status)
+                    # urllib's addinfourl lacks read1(); unwrap to the
+                    # underlying http.client.HTTPResponse for it.
+                    # IMPORTANT: fp.read1() returns RAW socket bytes
+                    # including chunked-encoding frames, so we MUST
+                    # pass Transfer-Encoding through to the client.
+                    _reader = response
+                    _raw_mode = False
+                    try:
+                        _fp = response.fp
+                        if hasattr(_fp, "read1"):
+                            _reader = _fp
+                            _raw_mode = True
+                    except AttributeError:
+                        pass
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {"transfer-encoding", "connection", "content-length"}:
+                        if low == "transfer-encoding":
+                            if _raw_mode:
+                                self.send_header(key, value)
+                            continue
+                        if low in {
+                            "connection",
+                            "content-length",
+                            "date",
+                            "server",
+                        }:
                             continue
                         self.send_header(key, value)
+                    self.send_header("Connection", "close")
                     self.end_headers()
+                    _chunk_n = 0
                     while True:
-                        # read1() returns immediately with available data
-                        # instead of blocking until 8192 bytes accumulate.
-                        # Critical for SSE and long-lived streaming responses.
                         try:
-                            chunk = response.read1(8192)
+                            chunk = _reader.read1(8192)
                         except AttributeError:
                             chunk = response.read(8192)
                         if not chunk:
                             break
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        _chunk_n += 1
+                        _has_msg = b'"message.' in chunk or b'"message"' in chunk
+                        if _chunk_n <= 30 or _chunk_n % 50 == 0 or _has_msg:
+                            _log.debug(
+                                "%s %s chunk #%d (%d bytes)%s%s",
+                                method, self.path, _chunk_n, len(chunk),
+                                " [MSG]" if _has_msg else "",
+                                " " + repr(chunk[:200]) if _chunk_n <= 5 or _has_msg else "",
+                            )
+                    _log.debug(
+                        "%s %s stream ended, %d chunks", method, self.path, _chunk_n
+                    )
                 else:
                     payload = response.read()
+                    _log.debug(
+                        "%s %s <- status=%d size=%d",
+                        method,
+                        self.path,
+                        response.status,
+                        len(payload),
+                    )
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         low = key.lower()
-                        if low in {"transfer-encoding", "connection"}:
+                        if low in {
+                            "transfer-encoding",
+                            "connection",
+                            "content-length",
+                            "date",
+                            "server",
+                        }:
                             continue
                         self.send_header(key, value)
                     self.send_header("Content-Length", str(len(payload)))
                     self.end_headers()
                     if payload:
                         self.wfile.write(payload)
+                    self.wfile.flush()
         except urlerror.HTTPError as exc:
             payload = exc.read() if exc.fp is not None else b""
             self.send_response(exc.code)
             for key, value in exc.headers.items() if exc.headers else []:
                 low = key.lower()
-                if low in {"transfer-encoding", "connection"}:
+                if low in {
+                    "transfer-encoding",
+                    "connection",
+                    "content-length",
+                    "date",
+                    "server",
+                }:
                     continue
                 self.send_header(key, value)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if payload:
                 self.wfile.write(payload)
+            self.wfile.flush()
         except BrokenPipeError:
+            _log.debug("%s %s client disconnected", method, self.path)
             return
         except Exception as exc:
+            _log.error(
+                "proxy failed: %s %s -> %s", method, self.path, exc, exc_info=True
+            )
             self._write_json(502, {"error": f"gateway proxy failed: {exc}"})
 
     def _write_json(self, status: int, payload: dict[str, Any]) -> None:
@@ -178,31 +284,34 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+        self.wfile.flush()
 
 
 def _is_session_message_path(path: str) -> bool:
     parts = [segment for segment in path.split("/") if segment]
-    return len(parts) == 3 and parts[0] == "session" and parts[2] == "message"
+    return (
+        len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}
+    )
 
 
 def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
-    if path == "/event":
+    # POST /message returns streaming JSON (Hono stream API);
+    # it MUST be relayed as a stream, not buffered with response.read().
+    if method.upper() == "POST" and _is_session_message_path(path):
+        return True
+    if path == "/event" or path.endswith("/event"):
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
     if "text/event-stream" in accept.lower():
-        return True
-    # Message POST blocks until LLM completes (60-120s+).
-    # Stream-proxy it to avoid the 15s request timeout and deliver bytes incrementally.
-    if method.upper() == "POST" and _is_session_message_path(path):
         return True
     return False
 
 
 def _session_id_from_path(path: str) -> str | None:
     parts = [segment for segment in path.split("/") if segment]
-    if len(parts) == 3 and parts[0] == "session" and parts[2] == "message":
+    if len(parts) == 3 and parts[0] == "session" and parts[2] in {"message", "prompt"}:
         return parts[1]
     return None
 
@@ -222,6 +331,12 @@ def _inject_tools_allowlist(
 
     query_text = _query_text_from_parts(payload.get("parts"))
     if not query_text:
+        # opencode uses {"prompt": "..."} for /session/{id}/prompt
+        prompt_val = payload.get("prompt")
+        if isinstance(prompt_val, str) and prompt_val.strip():
+            query_text = prompt_val.strip()
+    _log.debug("inject: query_text=%r", query_text[:200])
+    if not query_text:
         return raw_body
 
     session_id = _session_id_from_path(path) or state.config.default_session_id
@@ -231,15 +346,13 @@ def _inject_tools_allowlist(
 
     directory = _first(query.get("directory"))
     runtime_all_ids = _runtime_tool_ids(state, directory)
+    _log.debug(
+        "inject: selected=%s runtime_all=%d",
+        selected[:10] if selected else selected,
+        len(runtime_all_ids),
+    )
 
     if not selected:
-        _update_session_permissions(
-            state,
-            session_id=session_id,
-            directory=directory,
-            runtime_all_ids=runtime_all_ids,
-            allowed_ids=set(),
-        )
         payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
             "utf-8"
@@ -250,13 +363,6 @@ def _inject_tools_allowlist(
         runtime_all_ids,
     )
     if not runtime_ids:
-        _update_session_permissions(
-            state,
-            session_id=session_id,
-            directory=directory,
-            runtime_all_ids=runtime_all_ids,
-            allowed_ids=set(),
-        )
         payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
             "utf-8"
@@ -271,26 +377,21 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            _update_session_permissions(
-                state,
-                session_id=session_id,
-                directory=directory,
-                runtime_all_ids=runtime_all_ids,
-                allowed_ids=set(),
-            )
             payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
             return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
                 "utf-8"
             )
 
-    _update_session_permissions(
-        state,
-        session_id=session_id,
-        directory=directory,
-        runtime_all_ids=runtime_all_ids,
-        allowed_ids=set(runtime_ids),
+    tools_map = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+    for tool_id in runtime_ids:
+        tools_map[tool_id] = True
+    payload["tools"] = tools_map
+    _log.debug(
+        "inject: final tools_map enabled=%d disabled=%d body_len=%d",
+        sum(1 for v in tools_map.values() if v),
+        sum(1 for v in tools_map.values() if not v),
+        len(json.dumps(payload, separators=(',', ':'), sort_keys=True)),
     )
-    payload["tools"] = {tool_id: True for tool_id in runtime_ids}
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 

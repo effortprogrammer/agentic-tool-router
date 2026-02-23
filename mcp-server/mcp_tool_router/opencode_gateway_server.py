@@ -215,7 +215,7 @@ def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
     if method.upper() == "POST" and _is_session_message_path(path):
-        return False
+        return True
     if path == "/event":
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
@@ -257,13 +257,6 @@ def _inject_tools_allowlist(
     runtime_all_ids = _runtime_tool_ids(state, directory)
 
     if not selected:
-        _update_session_permissions(
-            state,
-            session_id=session_id,
-            directory=directory,
-            runtime_all_ids=runtime_all_ids,
-            allowed_ids=set(),
-        )
         payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
             "utf-8"
@@ -274,13 +267,6 @@ def _inject_tools_allowlist(
         runtime_all_ids,
     )
     if not runtime_ids:
-        _update_session_permissions(
-            state,
-            session_id=session_id,
-            directory=directory,
-            runtime_all_ids=runtime_all_ids,
-            allowed_ids=set(),
-        )
         payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
             "utf-8"
@@ -295,26 +281,15 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            _update_session_permissions(
-                state,
-                session_id=session_id,
-                directory=directory,
-                runtime_all_ids=runtime_all_ids,
-                allowed_ids=set(),
-            )
             payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
             return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
                 "utf-8"
             )
 
-    _update_session_permissions(
-        state,
-        session_id=session_id,
-        directory=directory,
-        runtime_all_ids=runtime_all_ids,
-        allowed_ids=set(runtime_ids),
-    )
-    payload["tools"] = {tool_id: True for tool_id in runtime_ids}
+    tools_map = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+    for tool_id in runtime_ids:
+        tools_map[tool_id] = True
+    payload["tools"] = tools_map
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 

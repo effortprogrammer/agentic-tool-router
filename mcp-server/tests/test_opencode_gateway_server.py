@@ -98,14 +98,9 @@ class GatewayServerTests(unittest.TestCase):
             "tools": {"read": True, "grep": False},
         }
 
-        with (
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
-                return_value={"read", "grep", "bash"},
-            ),
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._update_session_permissions"
-            ),
+        with mock.patch(
+            "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
+            return_value={"read", "grep", "bash"},
         ):
             patched = _gateway._inject_tools_allowlist(
                 state,
@@ -115,7 +110,7 @@ class GatewayServerTests(unittest.TestCase):
             )
 
         parsed = json.loads(patched.decode("utf-8"))
-        self.assertEqual(parsed["tools"], {"read": True})
+        self.assertEqual(parsed["tools"], {"bash": False, "grep": False, "read": True})
 
     def test_inject_tools_allowlist_disables_all_when_empty_selection(self) -> None:
         state = _gateway._GatewayState(
@@ -136,14 +131,9 @@ class GatewayServerTests(unittest.TestCase):
         )
         body = {"parts": [{"type": "text", "text": "hello"}]}
 
-        with (
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
-                return_value={"read", "grep", "bash"},
-            ),
-            mock.patch(
-                "mcp_tool_router.opencode_gateway_server._update_session_permissions"
-            ),
+        with mock.patch(
+            "mcp_tool_router.opencode_gateway_server._runtime_tool_ids",
+            return_value={"read", "grep", "bash"},
         ):
             patched = _gateway._inject_tools_allowlist(
                 state,
@@ -166,8 +156,8 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
-    def test_should_not_stream_proxy_message_post(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_message_post(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/message",
                 {},
@@ -175,8 +165,8 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
-    def test_should_not_stream_proxy_message_post_even_with_sse_accept(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_message_post_with_sse_accept(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/message",
                 {"Accept": "text/event-stream"},

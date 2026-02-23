@@ -215,8 +215,8 @@ def _should_stream_proxy(
     path: str, headers: dict[str, str], method: str = "GET"
 ) -> bool:
     if method.upper() == "POST" and _is_session_message_path(path):
-        return True
-    if path == "/event":
+        return False
+    if path == "/event" or path.endswith("/event"):
         return True
     accept = headers.get("Accept") or headers.get("accept") or ""
     if "text/event-stream" in accept.lower():

@@ -350,20 +350,16 @@ def _inject_tools_allowlist(
     )
 
     if not selected:
-        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
-        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
-            "utf-8"
-        )
+        _log.debug("inject: no tools selected, passing through unchanged")
+        return raw_body
 
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
         runtime_all_ids,
     )
     if not runtime_ids:
-        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
-        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
-            "utf-8"
-        )
+        _log.debug("inject: no runtime_ids mapped, passing through unchanged")
+        return raw_body
 
     existing = payload.get("tools")
     if isinstance(existing, dict):
@@ -374,10 +370,8 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
-            return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
-                "utf-8"
-            )
+            _log.debug("inject: no runtime_ids after existing filter, passing through unchanged")
+            return raw_body
 
     tools_map = {tool_id: False for tool_id in sorted(runtime_all_ids)}
     for tool_id in runtime_ids:

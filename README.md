@@ -18,26 +18,15 @@ mcpflow-router runs a lightweight gateway between OpenCode and its backend. On e
 ## Quick Start
 
 ```bash
-# Install and configure (auto-updates your OpenCode config)
-npx mcpflow-router opencode install
-
-# Run OpenCode as usual
-opencode
-```
-
-That's it. The installer automatically:
-- Configures built-in MCP servers (context7, grep_app, websearch)
-- Sets up the gateway launcher
-- Handles all wiring — no manual config needed
-
-### Updating
-
-```bash
 npm install -g mcpflow-router@latest
 npx mcpflow-router opencode install
 ```
 
-Existing configurations are migrated automatically.
+Then just run `opencode` as usual. The installer automatically:
+- Configures built-in MCP servers (context7, grep_app, websearch)
+- Sets up the gateway launcher
+- Handles all wiring — no manual config needed
+- Migrates existing configurations on update
 
 ### Install from Source
 

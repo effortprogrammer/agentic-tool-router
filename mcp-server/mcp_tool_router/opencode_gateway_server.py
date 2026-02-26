@@ -866,7 +866,7 @@ def _load_gateway_config() -> GatewayConfig:
         ),
         select_top_k=int(os.environ.get("ROUTER_GATEWAY_TOP_K", "20")),
         select_budget_tokens=int(
-            os.environ.get("ROUTER_GATEWAY_BUDGET_TOKENS", "1500")
+            os.environ.get("ROUTER_GATEWAY_BUDGET_TOKENS", "4000")
         ),
         default_session_id=os.environ.get("ROUTER_SESSION_ID", "default"),
         max_runtime_ids_cache_sec=float(

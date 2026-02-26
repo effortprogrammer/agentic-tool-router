@@ -11,11 +11,13 @@
   },
   "files": [
     "dist",
-    "mcp-server"
+    "mcp-server/mcp_tool_router/*.py",
+    "mcp-server/pyproject.toml",
+    "mcp-server/README.md"
   ],
   "scripts": {
     "build": "tsc",
-    "postinstall": "node -e \"const fs=require('fs'); if(fs.existsSync('dist/postinstall.js')) require('./dist/postinstall.js');\""
+    "postinstall": "node dist/postinstall.js 2>/dev/null || true"
   },
   "engines": {
     "node": ">=20"

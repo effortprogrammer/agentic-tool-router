@@ -68,6 +68,7 @@ class _GatewayState:
     lock: threading.Lock
     runtime_ids_cache: _RuntimeIdsCache | None = None
     session_permission_hashes: dict[str, str] | None = None
+    initial_sync_done: bool = False
 
 
 _STATE: _GatewayState | None = None
@@ -321,6 +322,14 @@ def _inject_tools_allowlist(
 ) -> bytes:
     if not raw_body:
         return raw_body
+
+    if not state.initial_sync_done:
+        try:
+            state.hub.sync_all()
+            _log.info("initial sync_all completed (MCP + native tools)")
+        except Exception as exc:
+            _log.warning("initial sync_all failed: %s", exc)
+        state.initial_sync_done = True
 
     payload = json.loads(raw_body.decode("utf-8"))
     if not isinstance(payload, dict):

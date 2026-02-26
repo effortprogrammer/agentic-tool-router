@@ -454,6 +454,15 @@ function ensureOpencodeGatewayShim(
     }
   }
 
+  // Re-sign the binary after rename/copy so macOS doesn't SIGKILL it.
+  try {
+    spawnSync("codesign", ["--force", "--sign", "-", realBinaryPath], {
+      stdio: "pipe",
+    });
+  } catch {
+    // codesign may not exist on non-macOS; ignore.
+  }
+
   const shim = buildOpencodeShim(realBinaryPath, gatewayRuntime);
   fs.writeFileSync(opencodePath, shim, { encoding: "utf-8", mode: 0o755 });
   fs.chmodSync(opencodePath, 0o755);

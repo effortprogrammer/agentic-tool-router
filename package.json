@@ -1,6 +1,6 @@
 {
   "name": "mcpflow-router",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "MCP tool router with smart-search and on-demand loading",
   "license": "MIT",
   "type": "module",

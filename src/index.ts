@@ -40,17 +40,17 @@ const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   context7: {
     type: "remote",
     url: "https://mcp.context7.com/mcp",
-    enabled: false,
+    enabled: true,
   },
   grep_app: {
     type: "remote",
     url: "https://mcp.grep.app",
-    enabled: false,
+    enabled: true,
   },
   websearch: {
     type: "remote",
     url: "https://mcp.exa.ai/mcp?tools=web_search_exa",
-    enabled: false,
+    enabled: true,
   },
 };
 
@@ -63,7 +63,7 @@ const INSTALL_PROFILES: Record<InstallTarget, InstallProfile> = {
     defaultConfigPath: "~/.config/opencode/opencode.json",
     mcpField: "mcp",
     wellKnownRemoteMcps: OPENCODE_WELL_KNOWN_REMOTE_MCPS,
-    postWriteHook: disableOhMyOpencodeMcps,
+    postWriteHook: reenableOhMyOpencodeMcps,
     postInstallHook: ensureOpencodeGatewayShim,
   },
   claude: {
@@ -140,6 +140,10 @@ function installTarget(target: InstallTarget, args: string[]): void {
   if (profile.wellKnownRemoteMcps) {
     for (const [id, entry] of Object.entries(profile.wellKnownRemoteMcps)) {
       if (id in mcp) {
+        const existing = mcp[id];
+        if (typeof existing === "object" && existing !== null) {
+          (existing as JsonObject).enabled = true;
+        }
         continue;
       }
       mcp[id] = { ...entry };
@@ -149,7 +153,7 @@ function installTarget(target: InstallTarget, args: string[]): void {
   if (options.disableOthers) {
     for (const entry of Object.values(mcp)) {
       if (typeof entry === "object" && entry !== null) {
-        (entry as JsonObject).enabled = false;
+        (entry as JsonObject).enabled = true;
       }
     }
   }
@@ -302,7 +306,7 @@ const OH_MY_OPENCODE_BUILTIN_MCPS = ["context7", "grep_app", "websearch"];
 const OPENCODE_SHIM_MARKER = "# mcpflow-router managed opencode launcher";
 const OPENCODE_REAL_SUFFIX = ".mcpflow-real";
 
-function disableOhMyOpencodeMcps(
+function reenableOhMyOpencodeMcps(
   opencodeConfigPath: string,
   createBackup: boolean,
 ): void {
@@ -325,23 +329,23 @@ function disableOhMyOpencodeMcps(
   const existing = Array.isArray(omoPayload.disabled_mcps)
     ? (omoPayload.disabled_mcps as string[])
     : [];
-  const merged = Array.from(new Set([...existing, ...OH_MY_OPENCODE_BUILTIN_MCPS]));
+  const cleaned = existing.filter((id) => !OH_MY_OPENCODE_BUILTIN_MCPS.includes(id));
 
   if (
-    merged.length === existing.length &&
-    merged.every((v) => existing.includes(v))
+    cleaned.length === existing.length &&
+    cleaned.every((v) => existing.includes(v))
   ) {
     return;
   }
 
-  omoPayload.disabled_mcps = merged;
+  omoPayload.disabled_mcps = cleaned;
   if (createBackup && fs.existsSync(omoPath)) {
     fs.copyFileSync(omoPath, `${omoPath}.bak`);
   }
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(omoPath, JSON.stringify(omoPayload, null, 2));
   console.log(
-    `Disabled oh-my-opencode built-in MCPs (${OH_MY_OPENCODE_BUILTIN_MCPS.join(", ")}) — now routed through the router.`,
+    `Re-enabled oh-my-opencode built-in MCPs (${OH_MY_OPENCODE_BUILTIN_MCPS.join(", ")}) by removing them from disabled_mcps.`,
   );
 }
 

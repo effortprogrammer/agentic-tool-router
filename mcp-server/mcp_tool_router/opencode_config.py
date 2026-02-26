@@ -11,17 +11,17 @@ _WELL_KNOWN_REMOTE_MCPS: dict[str, dict[str, Any]] = {
     "context7": {
         "type": "remote",
         "url": "https://mcp.context7.com/mcp",
-        "enabled": False,
+        "enabled": True,
     },
     "grep_app": {
         "type": "remote",
         "url": "https://mcp.grep.app",
-        "enabled": False,
+        "enabled": True,
     },
     "websearch": {
         "type": "remote",
         "url": "https://mcp.exa.ai/mcp?tools=web_search_exa",
-        "enabled": False,
+        "enabled": True,
     },
 }
 
@@ -49,14 +49,18 @@ def apply_router_config(
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:
             mcp[remote_id] = dict(remote_entry)
+            continue
+        existing = mcp.get(remote_id)
+        if isinstance(existing, dict):
+            existing["enabled"] = True
 
     if disable_others:
         for entry in mcp.values():
             if isinstance(entry, dict):
-                entry["enabled"] = False
+                entry["enabled"] = True
 
     _write_config(path, payload, create_backup=create_backup)
-    _disable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
+    _reenable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
     return payload
 
 
@@ -116,18 +120,22 @@ def main() -> int:
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:
             mcp[remote_id] = dict(remote_entry)
+            continue
+        existing = mcp.get(remote_id)
+        if isinstance(existing, dict):
+            existing["enabled"] = True
 
     if args.disable_others:
         for entry in mcp.values():
             if isinstance(entry, dict):
-                entry["enabled"] = False
+                entry["enabled"] = True
 
     if args.dry_run:
         _print_payload(payload)
         return 0
 
     _write_config(path, payload, create_backup=args.create_backup)
-    _disable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
+    _reenable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
     return 0
 
 
@@ -140,7 +148,36 @@ def _cleanup_router_entry(mcp: dict[str, Any], router_id: str) -> None:
         mcp.pop(router_id, None)
 
 
-def _disable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> None:
+def _reenable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> None:
+    changed = False
+
+    opencode_path = config_dir / "opencode.json"
+    if opencode_path.exists():
+        try:
+            opencode_raw = json.loads(opencode_path.read_text(encoding="utf-8"))
+            if isinstance(opencode_raw, dict):
+                mcp_payload = opencode_raw.get("mcp")
+                if isinstance(mcp_payload, dict):
+                    for mcp_id in _OH_MY_OPENCODE_BUILTIN_MCPS:
+                        entry = mcp_payload.get(mcp_id)
+                        if isinstance(entry, dict) and entry.get("enabled") is False:
+                            entry["enabled"] = True
+                            changed = True
+                if changed:
+                    if create_backup:
+                        backup = opencode_path.with_suffix(
+                            opencode_path.suffix + ".bak"
+                        )
+                        backup.write_text(
+                            opencode_path.read_text(encoding="utf-8"), encoding="utf-8"
+                        )
+                    opencode_path.write_text(
+                        json.dumps(opencode_raw, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+        except (json.JSONDecodeError, OSError):
+            pass
+
     omo_path = config_dir / "oh-my-opencode.json"
 
     omo_payload: dict[str, Any] = {}
@@ -157,21 +194,24 @@ def _disable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> No
         if isinstance(omo_payload.get("disabled_mcps"), list)
         else []
     )
-    merged = list(dict.fromkeys(existing + _OH_MY_OPENCODE_BUILTIN_MCPS))
+    cleaned = [
+        mcp_id for mcp_id in existing if mcp_id not in _OH_MY_OPENCODE_BUILTIN_MCPS
+    ]
 
-    if merged == existing:
-        return
+    if cleaned != existing:
+        omo_payload["disabled_mcps"] = cleaned
+        if create_backup and omo_path.exists():
+            backup = omo_path.with_suffix(omo_path.suffix + ".bak")
+            backup.write_text(omo_path.read_text(encoding="utf-8"), encoding="utf-8")
+        config_dir.mkdir(parents=True, exist_ok=True)
+        omo_path.write_text(json.dumps(omo_payload, indent=2), encoding="utf-8")
+        changed = True
 
-    omo_payload["disabled_mcps"] = merged
-    if create_backup and omo_path.exists():
-        backup = omo_path.with_suffix(omo_path.suffix + ".bak")
-        backup.write_text(omo_path.read_text(encoding="utf-8"), encoding="utf-8")
-    config_dir.mkdir(parents=True, exist_ok=True)
-    omo_path.write_text(json.dumps(omo_payload, indent=2), encoding="utf-8")
-    print(
-        f"Disabled oh-my-opencode built-in MCPs ({', '.join(_OH_MY_OPENCODE_BUILTIN_MCPS)})"
-        " - now routed through the gateway."
-    )
+    if changed:
+        print(
+            f"Re-enabled oh-my-opencode built-in MCPs ({', '.join(_OH_MY_OPENCODE_BUILTIN_MCPS)})"
+            " by removing them from disabled_mcps."
+        )
 
 
 def _load_config(config_path: str) -> tuple[dict[str, Any], Path]:

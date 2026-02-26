@@ -510,7 +510,6 @@ def _call_select_tools_prefer_sync(
             query=query,
             top_k=top_k,
             budget_tokens=budget_tokens,
-            sync=False,
         )
     except TypeError:
         return hub.select_tools(

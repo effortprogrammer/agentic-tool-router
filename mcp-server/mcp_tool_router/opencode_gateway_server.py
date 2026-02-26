@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
@@ -68,9 +69,24 @@ class _GatewayState:
     lock: threading.Lock
     runtime_ids_cache: _RuntimeIdsCache | None = None
     session_permission_hashes: dict[str, str] | None = None
+    initial_sync_done: bool = False
 
 
 _STATE: _GatewayState | None = None
+
+
+def _background_sync(state: _GatewayState, delay: float = 3.0) -> None:
+    """Sync tool catalog in background after startup delay."""
+    time.sleep(delay)
+    if state.initial_sync_done:
+        return  # Already synced (e.g., first message came quickly)
+    try:
+        state.hub.sync_all()
+        state.initial_sync_done = True
+        _log.info("background sync_all completed (MCP + native tools)")
+    except Exception as exc:
+        _log.warning("background sync_all failed: %s", exc)
+        # Don't set initial_sync_done — first-message sync will retry
 
 
 class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
@@ -111,7 +127,9 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
         if method.upper() == "POST" and _is_session_message_path(path):
             _log.debug(
                 "POST %s msg body (%d bytes): %s",
-                path, len(raw_body), raw_body[:500],
+                path,
+                len(raw_body),
+                raw_body[:500],
             )
             body_bytes = _inject_tools_allowlist(state, path, query, raw_body)
 
@@ -213,9 +231,14 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                         if _chunk_n <= 30 or _chunk_n % 50 == 0 or _has_msg:
                             _log.debug(
                                 "%s %s chunk #%d (%d bytes)%s%s",
-                                method, self.path, _chunk_n, len(chunk),
+                                method,
+                                self.path,
+                                _chunk_n,
+                                len(chunk),
                                 " [MSG]" if _has_msg else "",
-                                " " + repr(chunk[:200]) if _chunk_n <= 5 or _has_msg else "",
+                                " " + repr(chunk[:200])
+                                if _chunk_n <= 5 or _has_msg
+                                else "",
                             )
                     _log.debug(
                         "%s %s stream ended, %d chunks", method, self.path, _chunk_n
@@ -313,6 +336,129 @@ def _session_id_from_path(path: str) -> str | None:
     return None
 
 
+_KO_EN_KEYWORDS: dict[str, str] = {
+    "파일": "file",
+    "디렉토리": "directory",
+    "디렉터리": "directory",
+    "폴더": "directory folder",
+    "경로": "path",
+    "목록": "list",
+    "읽": "read",
+    "쓰기": "write",
+    "작성": "write create",
+    "수정": "edit modify",
+    "편집": "edit",
+    "삭제": "delete remove",
+    "제거": "remove delete",
+    "만들": "create",
+    "생성": "create new",
+    "복사": "copy",
+    "이동": "move rename",
+    "이름": "rename name",
+    "열": "open read",
+    "저장": "save write",
+    "보여": "show list display",
+    "찾": "find search",
+    "검색": "search find grep",
+    "실행": "execute run bash",
+    "확인": "check verify",
+    "코드": "code source",
+    "에러": "error",
+    "오류": "error bug",
+    "버그": "bug error fix",
+    "타입": "type",
+    "함수": "function",
+    "변수": "variable",
+    "클래스": "class",
+    "모듈": "module",
+    "패키지": "package",
+    "설치": "install",
+    "빌드": "build compile",
+    "테스트": "test",
+    "디버그": "debug",
+    "로그": "log",
+    "커밋": "commit git",
+    "브랜치": "branch git",
+    "푸시": "push git",
+    "풀": "pull git",
+    "터미널": "terminal shell bash",
+    "셸": "shell bash terminal",
+    "명령": "command execute",
+    "명령어": "command execute",
+    "스크립트": "script run",
+    "프로세스": "process",
+    "내용": "content text",
+    "텍스트": "text content",
+    "문서": "document",
+    "설정": "config configuration settings",
+    "환경": "environment config",
+    "이미지": "image screenshot",
+    "화면": "screenshot screen",
+    "웹": "web browser",
+    "세션": "session",
+    "히스토리": "history",
+    "기록": "history log",
+    "패턴": "pattern regex",
+    "정규": "regex pattern",
+    "구조": "structure tree",
+    "트리": "tree structure",
+    "종속": "dependency",
+    "의존": "dependency",
+    "라이브러리": "library package",
+    "프레임워크": "framework",
+    "서버": "server",
+    "포트": "port",
+    "배포": "deploy",
+    "컨테이너": "container docker",
+    "도커": "docker container",
+    # === filesystem/download ===
+    "권한": "permission chmod",
+    "다운로드": "download curl wget",
+    # === edit/modification actions ===
+    "변경": "change modify edit",
+    "바꾸": "replace change edit",
+    "바꿔": "replace change edit",
+    "교체": "replace swap",
+    "업데이트": "update modify",
+    "리팩토링": "refactor",
+    "리팩터": "refactor",
+    "고치": "fix repair",
+    "고쳐": "fix repair",
+    "패치": "patch fix",
+    "추가": "add insert append",
+    "넣": "insert add",
+    "줄": "line",
+    # === diagnostics/quality checks ===
+    "경고": "warning",
+    "린트": "lint",
+    "문제": "problem issue error",
+    "진단": "diagnostics check",
+    "이슈": "issue problem",
+    "타입스크립트": "typescript type",
+    "타입체크": "typecheck type check",
+    "컴파일": "compile build",
+    # === communication/sessions ===
+    "대화": "conversation chat",
+    "메시지": "message",
+    "채팅": "chat conversation",
+}
+
+
+def _translate_ko_keywords(text: str) -> str:
+    ascii_words = re.findall(r"[a-zA-Z]{2,}", text)
+    if len(ascii_words) >= 2:
+        return ""
+
+    english_parts: list[str] = []
+    english_parts.extend(ascii_words)
+
+    for ko, en in _KO_EN_KEYWORDS.items():
+        if ko in text:
+            english_parts.append(en)
+
+    return " ".join(english_parts)
+
+
 def _inject_tools_allowlist(
     state: _GatewayState,
     path: str,
@@ -321,6 +467,14 @@ def _inject_tools_allowlist(
 ) -> bytes:
     if not raw_body:
         return raw_body
+
+    if not state.initial_sync_done:
+        try:
+            state.hub.sync_all()
+            _log.info("initial sync_all completed (MCP + native tools)")
+        except Exception as exc:
+            _log.warning("initial sync_all failed: %s", exc)
+        state.initial_sync_done = True
 
     payload = json.loads(raw_body.decode("utf-8"))
     if not isinstance(payload, dict):
@@ -336,6 +490,11 @@ def _inject_tools_allowlist(
     if not query_text:
         return raw_body
 
+    translated = _translate_ko_keywords(query_text)
+    if translated:
+        query_text = translated
+        _log.debug("inject: translated query=%r", query_text[:200])
+
     session_id = _session_id_from_path(path) or state.config.default_session_id
     selected = _select_tools_with_timeout(state, session_id, query_text)
     if selected is None:
@@ -350,16 +509,28 @@ def _inject_tools_allowlist(
     )
 
     if not selected:
-        _log.debug("inject: no tools selected, passing through unchanged")
-        return raw_body
+        if not state.initial_sync_done:
+            _log.debug("inject: catalog not synced yet, passing through unchanged")
+            return raw_body
+        _log.debug("inject: no tools selected, disabling all tools")
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
 
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
         runtime_all_ids,
     )
     if not runtime_ids:
-        _log.debug("inject: no runtime_ids mapped, passing through unchanged")
-        return raw_body
+        if not state.initial_sync_done:
+            _log.debug("inject: catalog not synced yet, passing through unchanged")
+            return raw_body
+        _log.debug("inject: no runtime_ids mapped, disabling all tools")
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
 
     existing = payload.get("tools")
     if isinstance(existing, dict):
@@ -370,8 +541,16 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            _log.debug("inject: no runtime_ids after existing filter, passing through unchanged")
-            return raw_body
+            if not state.initial_sync_done:
+                _log.debug("inject: catalog not synced yet, passing through unchanged")
+                return raw_body
+            _log.debug(
+                "inject: no runtime_ids after existing filter, disabling all tools"
+            )
+            payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+            return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+                "utf-8"
+            )
 
     tools_map = {tool_id: False for tool_id in sorted(runtime_all_ids)}
     for tool_id in runtime_ids:
@@ -381,7 +560,7 @@ def _inject_tools_allowlist(
         "inject: final tools_map enabled=%d disabled=%d body_len=%d",
         sum(1 for v in tools_map.values() if v),
         sum(1 for v in tools_map.values() if not v),
-        len(json.dumps(payload, separators=(',', ':'), sort_keys=True)),
+        len(json.dumps(payload, separators=(",", ":"), sort_keys=True)),
     )
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -510,7 +689,6 @@ def _call_select_tools_prefer_sync(
             query=query,
             top_k=top_k,
             budget_tokens=budget_tokens,
-            sync=False,
         )
     except TypeError:
         return hub.select_tools(
@@ -688,7 +866,7 @@ def _load_gateway_config() -> GatewayConfig:
         ),
         select_top_k=int(os.environ.get("ROUTER_GATEWAY_TOP_K", "20")),
         select_budget_tokens=int(
-            os.environ.get("ROUTER_GATEWAY_BUDGET_TOKENS", "1500")
+            os.environ.get("ROUTER_GATEWAY_BUDGET_TOKENS", "4000")
         ),
         default_session_id=os.environ.get("ROUTER_SESSION_ID", "default"),
         max_runtime_ids_cache_sec=float(
@@ -715,6 +893,9 @@ def main() -> int:
         f"-> upstream {config.upstream_url}",
         file=sys.stderr,
     )
+    # Start background sync thread to warm up tool catalog before first user message
+    sync_thread = threading.Thread(target=_background_sync, args=(_STATE,), daemon=True)
+    sync_thread.start()
     try:
         server.serve_forever(poll_interval=0.5)
     finally:

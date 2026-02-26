@@ -482,6 +482,227 @@ def _merge_tool_definitions(
     return merged
 
 
+_NATIVE_TOOL_ENRICHMENTS: dict[str, dict[str, list[str]]] = {
+    "bash": {
+        "tags": [
+            "execute",
+            "command",
+            "shell",
+            "run",
+            "terminal",
+            "list",
+            "files",
+            "directory",
+            "install",
+            "build",
+            "test",
+            "script",
+        ],
+        "synonyms": [
+            "shell",
+            "terminal",
+            "command line",
+            "cli",
+            "exec",
+            "run command",
+            "execute command",
+        ],
+    },
+    "read": {
+        "tags": [
+            "read",
+            "file",
+            "content",
+            "view",
+            "open",
+            "cat",
+            "display",
+            "show",
+            "text",
+            "source",
+            "code",
+            "inspect",
+            "peek",
+            "head",
+            "tail",
+        ],
+        "synonyms": ["cat", "view file", "open file", "read file", "show file"],
+    },
+    "write": {
+        "tags": [
+            "write",
+            "file",
+            "create",
+            "save",
+            "output",
+            "overwrite",
+            "new file",
+            "content",
+        ],
+        "synonyms": ["create file", "save file", "write file"],
+    },
+    "edit": {
+        "tags": [
+            "edit",
+            "modify",
+            "change",
+            "update",
+            "patch",
+            "replace",
+            "insert",
+            "delete",
+            "refactor",
+            "fix",
+            "line",
+        ],
+        "synonyms": ["modify file", "change file", "update file", "patch file"],
+    },
+    "glob": {
+        "tags": [
+            "glob",
+            "find",
+            "files",
+            "search",
+            "pattern",
+            "list",
+            "directory",
+            "match",
+            "wildcard",
+            "path",
+            "locate",
+            "discover",
+        ],
+        "synonyms": ["find files", "list files", "search files", "file search"],
+    },
+    "grep": {
+        "tags": [
+            "grep",
+            "search",
+            "find",
+            "pattern",
+            "regex",
+            "match",
+            "content",
+            "text",
+            "code",
+            "occurrences",
+            "ripgrep",
+        ],
+        "synonyms": ["search content", "find in files", "text search", "code search"],
+    },
+    "lsp_diagnostics": {
+        "tags": [
+            "diagnostics",
+            "errors",
+            "warnings",
+            "lint",
+            "check",
+            "problems",
+            "issues",
+            "typescript",
+            "type",
+        ],
+        "synonyms": ["check errors", "find problems", "lint"],
+    },
+    "interactive_bash": {
+        "tags": ["interactive", "bash", "terminal", "shell", "vim", "htop", "tui", "tmux", "repl"],
+        "synonyms": ["interactive shell", "terminal app", "tui app"],
+    },
+    "ast_grep_search": {
+        "tags": ["ast", "grep", "search", "pattern", "code", "syntax", "tree", "structural", "match", "find"],
+        "synonyms": ["ast search", "structural search", "code pattern search"],
+    },
+    "ast_grep_replace": {
+        "tags": ["ast", "grep", "replace", "refactor", "pattern", "code", "rewrite", "transform"],
+        "synonyms": ["ast replace", "structural replace", "code refactor"],
+    },
+    "webfetch": {
+        "tags": ["web", "fetch", "url", "http", "download", "page", "content", "scrape", "browse"],
+        "synonyms": ["fetch url", "web page", "http request", "download page"],
+    },
+    "codesearch": {
+        "tags": ["code", "search", "find", "source", "repository", "codebase", "semantic"],
+        "synonyms": ["code search", "search code", "find code"],
+    },
+    "task": {
+        "tags": ["task", "delegate", "agent", "subagent", "background", "spawn", "parallel"],
+        "synonyms": ["delegate task", "spawn agent", "background task"],
+    },
+    "todowrite": {
+        "tags": ["todo", "task", "list", "plan", "track", "progress", "checklist"],
+        "synonyms": ["todo list", "task list", "create todo"],
+    },
+    "apply_patch": {
+        "tags": ["patch", "apply", "diff", "change", "merge", "unified"],
+        "synonyms": ["apply patch", "apply diff"],
+    },
+    "lsp_goto_definition": {
+        "tags": ["lsp", "goto", "definition", "navigate", "jump", "symbol", "source", "declaration"],
+        "synonyms": ["go to definition", "find definition", "jump to source"],
+    },
+    "lsp_find_references": {
+        "tags": ["lsp", "references", "find", "usage", "where", "used", "callers"],
+        "synonyms": ["find references", "find usages", "who calls"],
+    },
+    "lsp_symbols": {
+        "tags": ["lsp", "symbols", "outline", "structure", "functions", "classes", "workspace"],
+        "synonyms": ["list symbols", "file outline", "find symbol"],
+    },
+    "lsp_prepare_rename": {
+        "tags": ["lsp", "rename", "prepare", "check", "symbol", "refactor"],
+        "synonyms": ["prepare rename", "check rename"],
+    },
+    "lsp_rename": {
+        "tags": ["lsp", "rename", "symbol", "refactor", "variable", "function", "class"],
+        "synonyms": ["rename symbol", "rename variable", "rename function"],
+    },
+    "session_search": {
+        "tags": ["session", "search", "find", "query", "messages", "history"],
+        "synonyms": ["search sessions", "find in history"],
+    },
+    "session_info": {
+        "tags": ["session", "info", "metadata", "details", "statistics"],
+        "synonyms": ["session info", "session details"],
+    },
+    "look_at": {
+        "tags": ["look", "image", "screenshot", "visual", "pdf", "diagram", "analyze", "picture"],
+        "synonyms": ["analyze image", "look at screenshot", "visual analysis"],
+    },
+    "question": {
+        "tags": ["question", "ask", "user", "input", "prompt", "confirm", "choice"],
+        "synonyms": ["ask user", "get input", "confirm action"],
+    },
+    "skill": {
+        "tags": ["skill", "load", "activate", "capability", "plugin", "extension"],
+        "synonyms": ["load skill", "activate skill"],
+    },
+    "skill_mcp": {
+        "tags": ["skill", "mcp", "server", "invoke", "tool", "resource"],
+        "synonyms": ["invoke mcp", "skill mcp tool"],
+    },
+    "websearch": {
+        "tags": ["web", "search", "internet", "online", "google", "query", "browse"],
+        "synonyms": ["web search", "search internet", "google"],
+    },
+    "background_output": {
+        "tags": ["background", "output", "result", "task", "async", "retrieve"],
+        "synonyms": ["get background result", "task output"],
+    },
+    "background_cancel": {
+        "tags": ["background", "cancel", "stop", "abort", "task", "kill"],
+        "synonyms": ["cancel task", "stop background"],
+    },
+    "session_list": {
+        "tags": ["session", "list", "sessions", "history", "previous", "past"],
+        "synonyms": ["list sessions", "show sessions"],
+    },
+    "session_read": {
+        "tags": ["session", "read", "messages", "conversation", "history", "chat"],
+        "synonyms": ["read session", "show conversation"],
+    },
+}
+
+
 def _load_opencode_native_tools(
     config_path: str,
 ) -> tuple[dict[str, dict[str, HostToolSpec]], dict[str, list[dict[str, Any]]]]:
@@ -550,14 +771,19 @@ def _load_opencode_native_tools(
             execution="opencode",
             opencode_tool_id=tool_id,
         )
+        enrichment = _NATIVE_TOOL_ENRICHMENTS.get(tool_id, {})
+        base_tags = ["opencode", "native"]
+        extra_tags = enrichment.get("tags", [])
+        base_synonyms = [tool_id]
+        extra_synonyms = enrichment.get("synonyms", [])
         definitions.append(
             {
                 "id": tool_id,
                 "name": tool_id,
                 "description": str(description or f"OpenCode native tool: {tool_id}"),
                 "inputSchema": input_schema,
-                "tags": ["opencode", "native"],
-                "synonyms": [tool_id],
+                "tags": base_tags + extra_tags,
+                "synonyms": base_synonyms + extra_synonyms,
                 "annotations": {"idempotentHint": False},
             }
         )

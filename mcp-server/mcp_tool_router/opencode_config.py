@@ -3,29 +3,25 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
-import subprocess
+import warnings
 from pathlib import Path
 from typing import Any
-
-_ROUTER_MODULE = "mcp_tool_router.router_mcp_server"
-_REQUIRED_PACKAGES = ["httpx", "pyyaml"]
 
 _WELL_KNOWN_REMOTE_MCPS: dict[str, dict[str, Any]] = {
     "context7": {
         "type": "remote",
         "url": "https://mcp.context7.com/mcp",
-        "enabled": False,
+        "enabled": True,
     },
     "grep_app": {
         "type": "remote",
         "url": "https://mcp.grep.app",
-        "enabled": False,
+        "enabled": True,
     },
     "websearch": {
         "type": "remote",
         "url": "https://mcp.exa.ai/mcp?tools=web_search_exa",
-        "enabled": False,
+        "enabled": True,
     },
 }
 
@@ -37,55 +33,43 @@ def apply_router_config(
     disable_others: bool = True,
     create_backup: bool = True,
 ) -> dict[str, Any]:
+    warnings.warn(
+        "apply_router_config() is deprecated. Router MCP registration is removed; "
+        "this function now cleans up legacy router MCP entries.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    del router_command
+
     payload, path = _load_config(config_path)
     mcp = _ensure_mcp(payload)
 
-    if router_command:
-        resolved_cmd = list(router_command)
-        resolved_env: dict[str, str] = {}
-    else:
-        resolved_cmd, resolved_env = _resolve_router_command()
-
-    router_entry = (
-        dict(mcp.get(router_id, {})) if isinstance(mcp.get(router_id), dict) else {}
-    )
-    router_entry.update(
-        {
-            "type": "local",
-            "enabled": True,
-            "command": resolved_cmd,
-        }
-    )
-    if resolved_env:
-        environment = (
-            dict(router_entry.get("environment", {}))
-            if isinstance(router_entry.get("environment"), dict)
-            else {}
-        )
-        environment.update(resolved_env)
-        router_entry["environment"] = environment
-
-    mcp[router_id] = router_entry
+    _cleanup_router_entry(mcp, router_id)
 
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:
             mcp[remote_id] = dict(remote_entry)
+            continue
+        existing = mcp.get(remote_id)
+        if isinstance(existing, dict):
+            existing["enabled"] = True
 
     if disable_others:
-        for server_id, entry in mcp.items():
-            if server_id == router_id:
-                continue
+        for entry in mcp.values():
             if isinstance(entry, dict):
-                entry["enabled"] = False
+                entry["enabled"] = True
 
     _write_config(path, payload, create_backup=create_backup)
-    _disable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
+    _reenable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
     return payload
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Configure OpenCode to use the MCP router."
+        description=(
+            "[DEPRECATED] Cleanup legacy router MCP entries in OpenCode config. "
+            "Gateway injection is now used instead."
+        )
     )
     parser.add_argument(
         "--config",
@@ -93,12 +77,7 @@ def main() -> int:
         help="Path to opencode.json",
     )
     parser.add_argument(
-        "--router-id", default="router", help="MCP server id for the router entry"
-    )
-    parser.add_argument(
-        "--router-command",
-        nargs="+",
-        help="Router command (e.g., python3 -m mcp_tool_router.router_mcp_server)",
+        "--router-id", default="router", help="Legacy router MCP id to remove"
     )
     parser.add_argument(
         "--disable-others",
@@ -126,62 +105,79 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    warnings.warn(
+        "opencode_config.py CLI is deprecated. It now only removes legacy router MCP "
+        "entries and preserves gateway-compatible config.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     payload, path = _load_config(args.config)
     mcp = _ensure_mcp(payload)
 
-    if args.router_command:
-        resolved_cmd = list(args.router_command)
-        resolved_env: dict[str, str] = {}
-    else:
-        resolved_cmd, resolved_env = _resolve_router_command()
-
-    router_entry = (
-        dict(mcp.get(args.router_id, {}))
-        if isinstance(mcp.get(args.router_id), dict)
-        else {}
-    )
-    router_entry.update(
-        {
-            "type": "local",
-            "enabled": True,
-            "command": resolved_cmd,
-        }
-    )
-    if resolved_env:
-        environment = (
-            dict(router_entry.get("environment", {}))
-            if isinstance(router_entry.get("environment"), dict)
-            else {}
-        )
-        environment.update(resolved_env)
-        router_entry["environment"] = environment
-
-    mcp[args.router_id] = router_entry
+    _cleanup_router_entry(mcp, args.router_id)
 
     for remote_id, remote_entry in _WELL_KNOWN_REMOTE_MCPS.items():
         if remote_id not in mcp:
             mcp[remote_id] = dict(remote_entry)
+            continue
+        existing = mcp.get(remote_id)
+        if isinstance(existing, dict):
+            existing["enabled"] = True
 
     if args.disable_others:
-        for server_id, entry in mcp.items():
-            if server_id == args.router_id:
-                continue
+        for entry in mcp.values():
             if isinstance(entry, dict):
-                entry["enabled"] = False
+                entry["enabled"] = True
 
     if args.dry_run:
         _print_payload(payload)
         return 0
 
     _write_config(path, payload, create_backup=args.create_backup)
-    _disable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
+    _reenable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
     return 0
 
 
 _OH_MY_OPENCODE_BUILTIN_MCPS = ["context7", "grep_app", "websearch"]
 
 
-def _disable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> None:
+def _cleanup_router_entry(mcp: dict[str, Any], router_id: str) -> None:
+    mcp.pop("router", None)
+    if router_id != "router":
+        mcp.pop(router_id, None)
+
+
+def _reenable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> None:
+    changed = False
+
+    opencode_path = config_dir / "opencode.json"
+    if opencode_path.exists():
+        try:
+            opencode_raw = json.loads(opencode_path.read_text(encoding="utf-8"))
+            if isinstance(opencode_raw, dict):
+                mcp_payload = opencode_raw.get("mcp")
+                if isinstance(mcp_payload, dict):
+                    for mcp_id in _OH_MY_OPENCODE_BUILTIN_MCPS:
+                        entry = mcp_payload.get(mcp_id)
+                        if isinstance(entry, dict) and entry.get("enabled") is False:
+                            entry["enabled"] = True
+                            changed = True
+                if changed:
+                    if create_backup:
+                        backup = opencode_path.with_suffix(
+                            opencode_path.suffix + ".bak"
+                        )
+                        backup.write_text(
+                            opencode_path.read_text(encoding="utf-8"), encoding="utf-8"
+                        )
+                    opencode_path.write_text(
+                        json.dumps(opencode_raw, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+        except (json.JSONDecodeError, OSError):
+            pass
+
     omo_path = config_dir / "oh-my-opencode.json"
 
     omo_payload: dict[str, Any] = {}
@@ -198,89 +194,24 @@ def _disable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> No
         if isinstance(omo_payload.get("disabled_mcps"), list)
         else []
     )
-    merged = list(dict.fromkeys(existing + _OH_MY_OPENCODE_BUILTIN_MCPS))
+    cleaned = [
+        mcp_id for mcp_id in existing if mcp_id not in _OH_MY_OPENCODE_BUILTIN_MCPS
+    ]
 
-    if merged == existing:
-        return
+    if cleaned != existing:
+        omo_payload["disabled_mcps"] = cleaned
+        if create_backup and omo_path.exists():
+            backup = omo_path.with_suffix(omo_path.suffix + ".bak")
+            backup.write_text(omo_path.read_text(encoding="utf-8"), encoding="utf-8")
+        config_dir.mkdir(parents=True, exist_ok=True)
+        omo_path.write_text(json.dumps(omo_payload, indent=2), encoding="utf-8")
+        changed = True
 
-    omo_payload["disabled_mcps"] = merged
-    if create_backup and omo_path.exists():
-        backup = omo_path.with_suffix(omo_path.suffix + ".bak")
-        backup.write_text(omo_path.read_text(encoding="utf-8"), encoding="utf-8")
-    config_dir.mkdir(parents=True, exist_ok=True)
-    omo_path.write_text(json.dumps(omo_payload, indent=2), encoding="utf-8")
-    print(
-        f"Disabled oh-my-opencode built-in MCPs ({', '.join(_OH_MY_OPENCODE_BUILTIN_MCPS)})"
-        " — now routed through the router."
-    )
-
-
-def _resolve_router_command() -> tuple[list[str], dict[str, str]]:
-    default_cmd = ["python3", "-m", _ROUTER_MODULE]
-    env: dict[str, str] = {}
-    monorepo_root = _find_monorepo_root()
-
-    if monorepo_root is not None:
-        python_dir = monorepo_root / "router-runtime"
-        if python_dir.is_dir() and (python_dir / "mcp_tool_router").is_dir():
-            env["PYTHONPATH"] = str(python_dir)
-
-        daemon_cli = monorepo_root / "packages" / "daemon" / "dist" / "cli.js"
-        if daemon_cli.is_file():
-            env["ROUTERD"] = f"node {daemon_cli}"
-
-    # 1. Project .venv python
-    if monorepo_root is not None:
-        venv_python = monorepo_root / ".venv" / "bin" / "python3"
-        if venv_python.is_file() and _can_import(str(venv_python), "httpx", env):
-            return [str(venv_python), "-m", _ROUTER_MODULE], env
-
-    # 2. System python3
-    system_python = _find_python()
-    if system_python is not None and _can_import(system_python, "httpx", env):
-        return [system_python, "-m", _ROUTER_MODULE], env
-
-    # 3. uv run
-    uv = shutil.which("uv")
-    if uv is not None:
-        with_args: list[str] = []
-        for pkg in _REQUIRED_PACKAGES:
-            with_args.extend(["--with", pkg])
-        return [uv, "run", *with_args, "python3", "-m", _ROUTER_MODULE], env
-
-    # 4. Fallback
-    return default_cmd, env
-
-
-def _can_import(python: str, pkg: str, env: dict[str, str]) -> bool:
-    merged_env = {**os.environ, **env}
-    result = subprocess.run(
-        [python, "-c", f"import {pkg}"],
-        capture_output=True,
-        env=merged_env,
-    )
-    return result.returncode == 0
-
-
-def _find_monorepo_root() -> Path | None:
-    current = Path(__file__).resolve().parent
-    for _ in range(8):
-        if (current / "router-runtime" / "mcp_tool_router").is_dir() and (
-            current / "packages" / "daemon"
-        ).is_dir():
-            return current
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-    return None
-
-
-def _find_python() -> str | None:
-    for cmd in ("python3", "python"):
-        if shutil.which(cmd) is not None:
-            return cmd
-    return None
+    if changed:
+        print(
+            f"Re-enabled oh-my-opencode built-in MCPs ({', '.join(_OH_MY_OPENCODE_BUILTIN_MCPS)})"
+            " by removing them from disabled_mcps."
+        )
 
 
 def _load_config(config_path: str) -> tuple[dict[str, Any], Path]:

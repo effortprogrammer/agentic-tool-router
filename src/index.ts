@@ -33,7 +33,6 @@ interface UnsupportedInstallProfile {
 
 type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 
-const ROUTER_MODULE = "mcp_tool_router.router_mcp_server";
 const GATEWAY_MODULE = "mcp_tool_router.opencode_gateway_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
 
@@ -41,17 +40,17 @@ const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   context7: {
     type: "remote",
     url: "https://mcp.context7.com/mcp",
-    enabled: false,
+    enabled: true,
   },
   grep_app: {
     type: "remote",
     url: "https://mcp.grep.app",
-    enabled: false,
+    enabled: true,
   },
   websearch: {
     type: "remote",
     url: "https://mcp.exa.ai/mcp?tools=web_search_exa",
-    enabled: false,
+    enabled: true,
   },
 };
 
@@ -64,7 +63,7 @@ const INSTALL_PROFILES: Record<InstallTarget, InstallProfile> = {
     defaultConfigPath: "~/.config/opencode/opencode.json",
     mcpField: "mcp",
     wellKnownRemoteMcps: OPENCODE_WELL_KNOWN_REMOTE_MCPS,
-    postWriteHook: disableOhMyOpencodeMcps,
+    postWriteHook: reenableOhMyOpencodeMcps,
     postInstallHook: ensureOpencodeGatewayShim,
   },
   claude: {
@@ -131,36 +130,20 @@ function installTarget(target: InstallTarget, args: string[]): void {
 
   const routerId = options.routerId;
   const monorepoRoot = findMonorepoRoot();
-  const resolved =
-    options.routerCommand.length > 0
-      ? { command: options.routerCommand, env: {} as Record<string, string> }
-      : resolveRouterCommand(monorepoRoot);
   const gatewayResolved = resolveGatewayCommand(monorepoRoot);
 
-  const existing = mcp[routerId];
-  const routerEntry =
-    typeof existing === "object" && existing !== null
-      ? { ...(existing as JsonObject) }
-      : {};
-  routerEntry.type = "local";
-  routerEntry.enabled = true;
-  routerEntry.command = resolved.command;
-
-  if (Object.keys(resolved.env).length > 0) {
-    const environment =
-      typeof routerEntry.environment === "object" &&
-      routerEntry.environment !== null
-        ? { ...(routerEntry.environment as JsonObject) }
-        : {};
-    Object.assign(environment, resolved.env);
-    routerEntry.environment = environment;
+  delete mcp.router;
+  if (routerId !== "router") {
+    delete mcp[routerId];
   }
-
-  mcp[routerId] = routerEntry;
 
   if (profile.wellKnownRemoteMcps) {
     for (const [id, entry] of Object.entries(profile.wellKnownRemoteMcps)) {
       if (id in mcp) {
+        const existing = mcp[id];
+        if (typeof existing === "object" && existing !== null) {
+          (existing as JsonObject).enabled = true;
+        }
         continue;
       }
       mcp[id] = { ...entry };
@@ -168,12 +151,9 @@ function installTarget(target: InstallTarget, args: string[]): void {
   }
 
   if (options.disableOthers) {
-    for (const [serverId, entry] of Object.entries(mcp)) {
-      if (serverId === routerId) {
-        continue;
-      }
+    for (const entry of Object.values(mcp)) {
       if (typeof entry === "object" && entry !== null) {
-        (entry as JsonObject).enabled = false;
+        (entry as JsonObject).enabled = true;
       }
     }
   }
@@ -211,7 +191,6 @@ function isInstallTarget(value: string): value is InstallTarget {
 function parseInstallArgs(args: string[]): {
   config: string | null;
   routerId: string;
-  routerCommand: string[];
   disableOthers: boolean;
   createBackup: boolean;
   dryRun: boolean;
@@ -221,7 +200,6 @@ function parseInstallArgs(args: string[]): {
   let disableOthers = true;
   let createBackup = true;
   let dryRun = false;
-  let routerCommand: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -241,12 +219,6 @@ function parseInstallArgs(args: string[]): {
       }
       routerId = value;
       i += 1;
-      continue;
-    }
-    if (arg === "--router-command") {
-      const result = readCommandArgs(args, i + 1);
-      routerCommand = result.command;
-      i = result.nextIndex;
       continue;
     }
     if (arg === "--keep-others") {
@@ -274,35 +246,10 @@ function parseInstallArgs(args: string[]): {
   return {
     config,
     routerId,
-    routerCommand,
     disableOthers,
     createBackup,
     dryRun,
   };
-}
-
-function readCommandArgs(
-  args: string[],
-  startIndex: number,
-): { command: string[]; nextIndex: number } {
-  const command: string[] = [];
-  let i = startIndex;
-  for (; i < args.length; i += 1) {
-    const current = args[i];
-    if (!current) {
-      continue;
-    }
-    if (current.startsWith("--")) {
-      i -= 1;
-      break;
-    }
-    command.push(current);
-  }
-  const first = command[0];
-  if (command.length === 1 && first && first.includes(" ")) {
-    command.splice(0, 1, ...first.split(" ").filter(Boolean));
-  }
-  return { command, nextIndex: i };
 }
 
 function loadConfig(configPath: string): JsonObject {
@@ -359,7 +306,7 @@ const OH_MY_OPENCODE_BUILTIN_MCPS = ["context7", "grep_app", "websearch"];
 const OPENCODE_SHIM_MARKER = "# mcpflow-router managed opencode launcher";
 const OPENCODE_REAL_SUFFIX = ".mcpflow-real";
 
-function disableOhMyOpencodeMcps(
+function reenableOhMyOpencodeMcps(
   opencodeConfigPath: string,
   createBackup: boolean,
 ): void {
@@ -382,23 +329,23 @@ function disableOhMyOpencodeMcps(
   const existing = Array.isArray(omoPayload.disabled_mcps)
     ? (omoPayload.disabled_mcps as string[])
     : [];
-  const merged = Array.from(new Set([...existing, ...OH_MY_OPENCODE_BUILTIN_MCPS]));
+  const cleaned = existing.filter((id) => !OH_MY_OPENCODE_BUILTIN_MCPS.includes(id));
 
   if (
-    merged.length === existing.length &&
-    merged.every((v) => existing.includes(v))
+    cleaned.length === existing.length &&
+    cleaned.every((v) => existing.includes(v))
   ) {
     return;
   }
 
-  omoPayload.disabled_mcps = merged;
+  omoPayload.disabled_mcps = cleaned;
   if (createBackup && fs.existsSync(omoPath)) {
     fs.copyFileSync(omoPath, `${omoPath}.bak`);
   }
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(omoPath, JSON.stringify(omoPayload, null, 2));
   console.log(
-    `Disabled oh-my-opencode built-in MCPs (${OH_MY_OPENCODE_BUILTIN_MCPS.join(", ")}) — now routed through the router.`,
+    `Re-enabled oh-my-opencode built-in MCPs (${OH_MY_OPENCODE_BUILTIN_MCPS.join(", ")}) by removing them from disabled_mcps.`,
   );
 }
 
@@ -452,6 +399,15 @@ function ensureOpencodeGatewayShim(
     } else {
       fs.renameSync(opencodePath, realBinaryPath);
     }
+  }
+
+  // Re-sign the binary after rename/copy so macOS doesn't SIGKILL it.
+  try {
+    spawnSync("codesign", ["--force", "--sign", "-", realBinaryPath], {
+      stdio: "pipe",
+    });
+  } catch {
+    // codesign may not exist on non-macOS; ignore.
   }
 
   const shim = buildOpencodeShim(realBinaryPath, gatewayRuntime);
@@ -531,17 +487,23 @@ function buildOpencodeShim(
     "      ;;",
     "  esac",
     "fi",
-    "if ! lsof -nP -iTCP:4096 -sTCP:LISTEN >/dev/null 2>&1; then",
-    "  \"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
-    "  server_pid=$!",
-    "  started_server=1",
-    "  for _ in {1..80}; do",
-    "    if lsof -nP -iTCP:4096 -sTCP:LISTEN >/dev/null 2>&1; then",
-    "      break",
-    "    fi",
-    "    sleep 0.05",
-    "  done",
+    "# Kill stale opencode serve (may have old config)",
+    "existing_serve_pids=$(lsof -tiTCP:4096 -sTCP:LISTEN 2>/dev/null || true)",
+    "if [[ -n \"$existing_serve_pids\" ]]; then",
+    "  kill $existing_serve_pids >/dev/null 2>&1 || true",
+    "  sleep 0.5",
     "fi",
+    "",
+    "# Start fresh opencode serve",
+    "\"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
+    "server_pid=$!",
+    "started_server=1",
+    "for _ in {1..100}; do",
+    "  if curl -sf --max-time 1 http://127.0.0.1:4096/experimental/tool/ids >/dev/null 2>&1; then",
+"    break",
+"  fi",
+    "  sleep 0.1",
+"done",
     "existing_gateway_pids=$(lsof -tiTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN 2>/dev/null || true)",
     "if [[ -n \"$existing_gateway_pids\" ]]; then",
     "  kill $existing_gateway_pids >/dev/null 2>&1 || true",
@@ -556,7 +518,7 @@ function buildOpencodeShim(
     "  fi",
     "  sleep 0.05",
     "done",
-    "exec \"$REAL_OPENCODE\" attach \"http://${GATEWAY_HOST}:${GATEWAY_PORT}\" \"$@\"",
+    "\"$REAL_OPENCODE\" attach \"http://${GATEWAY_HOST}:${GATEWAY_PORT}\" \"$@\"",
     "",
   ].join("\n");
 }
@@ -574,12 +536,6 @@ function expandHome(value: string): string {
 
 function printJson(payload: JsonObject): void {
   console.log(JSON.stringify(payload, null, 2));
-}
-
-function resolveRouterCommand(
-  monorepoRoot: string | null,
-): { command: string[]; env: Record<string, string> } {
-  return resolvePythonModuleCommand(monorepoRoot, ROUTER_MODULE);
 }
 
 function resolveGatewayCommand(
@@ -708,8 +664,7 @@ function printHelp(): void {
       "",
       "Options:",
       "  --config <path>           Override target config path",
-      "  --router-id <id>          MCP server id for the router (default: router)",
-      "  --router-command <cmd..>  Router command (default: python3 -m mcp_tool_router.router_mcp_server)",
+      "  --router-id <id>          Legacy router MCP id to remove (default: router)",
       "  --keep-others             Keep existing enabled flags for other MCP entries",
       "  --disable-others          Disable all other MCP entries (default)",
       "  --no-backup               Do not create a .bak backup",

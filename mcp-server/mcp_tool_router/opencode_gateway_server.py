@@ -359,16 +359,24 @@ def _inject_tools_allowlist(
     )
 
     if not selected:
-        _log.debug("inject: no tools selected, passing through unchanged")
-        return raw_body
+        if not state.initial_sync_done:
+            _log.debug("inject: catalog not synced yet, passing through unchanged")
+            return raw_body
+        _log.debug("inject: no tools selected, disabling all tools")
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
     runtime_ids = _map_selected_to_runtime_ids(
         selected,
         runtime_all_ids,
     )
     if not runtime_ids:
-        _log.debug("inject: no runtime_ids mapped, passing through unchanged")
-        return raw_body
+        if not state.initial_sync_done:
+            _log.debug("inject: catalog not synced yet, passing through unchanged")
+            return raw_body
+        _log.debug("inject: no runtime_ids mapped, disabling all tools")
+        payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
     existing = payload.get("tools")
     if isinstance(existing, dict):
@@ -379,8 +387,12 @@ def _inject_tools_allowlist(
             tool_id for tool_id in runtime_ids if tool_id in existing_allowed
         ]
         if not runtime_ids:
-            _log.debug("inject: no runtime_ids after existing filter, passing through unchanged")
-            return raw_body
+            if not state.initial_sync_done:
+                _log.debug("inject: catalog not synced yet, passing through unchanged")
+                return raw_body
+            _log.debug("inject: no runtime_ids after existing filter, disabling all tools")
+            payload["tools"] = {tool_id: False for tool_id in sorted(runtime_all_ids)}
+            return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
     tools_map = {tool_id: False for tool_id in sorted(runtime_all_ids)}
     for tool_id in runtime_ids:

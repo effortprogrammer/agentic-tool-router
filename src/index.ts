@@ -33,7 +33,6 @@ interface UnsupportedInstallProfile {
 
 type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 
-const ROUTER_MODULE = "mcp_tool_router.router_mcp_server";
 const GATEWAY_MODULE = "mcp_tool_router.opencode_gateway_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
 
@@ -131,32 +130,12 @@ function installTarget(target: InstallTarget, args: string[]): void {
 
   const routerId = options.routerId;
   const monorepoRoot = findMonorepoRoot();
-  const resolved =
-    options.routerCommand.length > 0
-      ? { command: options.routerCommand, env: {} as Record<string, string> }
-      : resolveRouterCommand(monorepoRoot);
   const gatewayResolved = resolveGatewayCommand(monorepoRoot);
 
-  const existing = mcp[routerId];
-  const routerEntry =
-    typeof existing === "object" && existing !== null
-      ? { ...(existing as JsonObject) }
-      : {};
-  routerEntry.type = "local";
-  routerEntry.enabled = true;
-  routerEntry.command = resolved.command;
-
-  if (Object.keys(resolved.env).length > 0) {
-    const environment =
-      typeof routerEntry.environment === "object" &&
-      routerEntry.environment !== null
-        ? { ...(routerEntry.environment as JsonObject) }
-        : {};
-    Object.assign(environment, resolved.env);
-    routerEntry.environment = environment;
+  delete mcp.router;
+  if (routerId !== "router") {
+    delete mcp[routerId];
   }
-
-  mcp[routerId] = routerEntry;
 
   if (profile.wellKnownRemoteMcps) {
     for (const [id, entry] of Object.entries(profile.wellKnownRemoteMcps)) {
@@ -168,10 +147,7 @@ function installTarget(target: InstallTarget, args: string[]): void {
   }
 
   if (options.disableOthers) {
-    for (const [serverId, entry] of Object.entries(mcp)) {
-      if (serverId === routerId) {
-        continue;
-      }
+    for (const entry of Object.values(mcp)) {
       if (typeof entry === "object" && entry !== null) {
         (entry as JsonObject).enabled = false;
       }
@@ -211,7 +187,6 @@ function isInstallTarget(value: string): value is InstallTarget {
 function parseInstallArgs(args: string[]): {
   config: string | null;
   routerId: string;
-  routerCommand: string[];
   disableOthers: boolean;
   createBackup: boolean;
   dryRun: boolean;
@@ -221,7 +196,6 @@ function parseInstallArgs(args: string[]): {
   let disableOthers = true;
   let createBackup = true;
   let dryRun = false;
-  let routerCommand: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -241,12 +215,6 @@ function parseInstallArgs(args: string[]): {
       }
       routerId = value;
       i += 1;
-      continue;
-    }
-    if (arg === "--router-command") {
-      const result = readCommandArgs(args, i + 1);
-      routerCommand = result.command;
-      i = result.nextIndex;
       continue;
     }
     if (arg === "--keep-others") {
@@ -274,35 +242,10 @@ function parseInstallArgs(args: string[]): {
   return {
     config,
     routerId,
-    routerCommand,
     disableOthers,
     createBackup,
     dryRun,
   };
-}
-
-function readCommandArgs(
-  args: string[],
-  startIndex: number,
-): { command: string[]; nextIndex: number } {
-  const command: string[] = [];
-  let i = startIndex;
-  for (; i < args.length; i += 1) {
-    const current = args[i];
-    if (!current) {
-      continue;
-    }
-    if (current.startsWith("--")) {
-      i -= 1;
-      break;
-    }
-    command.push(current);
-  }
-  const first = command[0];
-  if (command.length === 1 && first && first.includes(" ")) {
-    command.splice(0, 1, ...first.split(" ").filter(Boolean));
-  }
-  return { command, nextIndex: i };
 }
 
 function loadConfig(configPath: string): JsonObject {
@@ -585,12 +528,6 @@ function printJson(payload: JsonObject): void {
   console.log(JSON.stringify(payload, null, 2));
 }
 
-function resolveRouterCommand(
-  monorepoRoot: string | null,
-): { command: string[]; env: Record<string, string> } {
-  return resolvePythonModuleCommand(monorepoRoot, ROUTER_MODULE);
-}
-
 function resolveGatewayCommand(
   monorepoRoot: string | null,
 ): { command: string[]; env: Record<string, string> } {
@@ -717,8 +654,7 @@ function printHelp(): void {
       "",
       "Options:",
       "  --config <path>           Override target config path",
-      "  --router-id <id>          MCP server id for the router (default: router)",
-      "  --router-command <cmd..>  Router command (default: python3 -m mcp_tool_router.router_mcp_server)",
+      "  --router-id <id>          Legacy router MCP id to remove (default: router)",
       "  --keep-others             Keep existing enabled flags for other MCP entries",
       "  --disable-others          Disable all other MCP entries (default)",
       "  --no-backup               Do not create a .bak backup",

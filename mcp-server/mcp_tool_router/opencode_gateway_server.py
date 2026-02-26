@@ -70,8 +70,22 @@ class _GatewayState:
     session_permission_hashes: dict[str, str] | None = None
     initial_sync_done: bool = False
 
-
 _STATE: _GatewayState | None = None
+
+
+def _background_sync(state: _GatewayState, delay: float = 3.0) -> None:
+    """Sync tool catalog in background after startup delay."""
+    time.sleep(delay)
+    if state.initial_sync_done:
+        return  # Already synced (e.g., first message came quickly)
+    try:
+        state.hub.sync_all()
+        state.initial_sync_done = True
+        _log.info("background sync_all completed (MCP + native tools)")
+    except Exception as exc:
+        _log.warning("background sync_all failed: %s", exc)
+        # Don't set initial_sync_done — first-message sync will retry
+
 
 
 class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
@@ -735,6 +749,11 @@ def main() -> int:
         f"-> upstream {config.upstream_url}",
         file=sys.stderr,
     )
+    # Start background sync thread to warm up tool catalog before first user message
+    sync_thread = threading.Thread(
+        target=_background_sync, args=(_STATE,), daemon=True
+    )
+    sync_thread.start()
     try:
         server.serve_forever(poll_interval=0.5)
     finally:

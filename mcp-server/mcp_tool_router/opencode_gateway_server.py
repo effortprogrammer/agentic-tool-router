@@ -701,6 +701,13 @@ def main() -> int:
     global _STATE
     config = _load_gateway_config()
     hub = _load_gateway_hub()
+    def _bg_sync() -> None:
+        try:
+            hub.sync_missing()
+            _log.info("initial tool catalog sync completed")
+        except Exception as exc:
+            _log.warning("initial tool catalog sync failed: %s", exc)
+    threading.Thread(target=_bg_sync, daemon=True).start()
     _STATE = _GatewayState(
         hub=hub,
         config=config,

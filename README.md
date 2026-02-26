@@ -1,72 +1,43 @@
 # mcpflow-router
 
-Smart tool routing for OpenCode. Reduces tool context
-usage through smart search, working-set management, and on-demand tool loading.
+Smart tool routing for OpenCode. Reduces tool context sent to the LLM by selecting only relevant tools per query.
 
 ## The Problem
 
-When you configure many MCP servers in OpenCode, every tool definition is sent to
-the LLM on every turn — leaving less context for your actual conversation and code.
+When you configure many MCP servers in OpenCode, every tool definition is sent to the LLM on every turn — leaving less room for your actual conversation and code.
 
-## The Solution
+## How It Works
 
-mcpflow-router sits between OpenCode and your MCP servers, exposing only **3 meta-tools**:
+mcpflow-router runs a lightweight gateway between OpenCode and its backend. On each message, the gateway scores all available tools against your query and enables only the relevant ones. OpenCode and the LLM never see the tools that don't match.
 
-| Tool                  | Purpose                                            |
-| --------------------- | -------------------------------------------------- |
-| `select_tools`        | Search for relevant tools by query |
-| `call_tool`           | Call a tool by `{serverId}:{toolName}`             |
-| `tool_info`           | Inspect a tool's full schema before calling it     |
-
-```
-User: "Create a GitHub PR"
-  → OpenCode calls: select_tools({ query: "github pull request" })
-  → Router returns: [{ toolId: "github:create_pull_request", ... }]
-  → OpenCode calls: call_tool({ toolId: "github:create_pull_request", arguments: {...} })
-```
+- 33 tools configured → 3-10 tools sent per message (typical)
+- Transparent — no workflow changes, no extra commands
+- Works with both OpenCode native tools and MCP server tools
+- Supports Korean and English queries
 
 ## Quick Start
 
-**3 commands and you're done:**
-
 ```bash
-# 1. Install and configure mcpflow-router (auto-updates your OpenCode config)
+# Install and configure (auto-updates your OpenCode config)
 npx mcpflow-router opencode install
 
-# 2. Start OpenCode — it auto-loads mcpflow-router
-# (no manual config needed!)
-# Important: run `opencode` as your normal user (not with sudo)
-
-# 3. Verify it works
-opencode mcp list
-# Should see "router" with ✓ connected status
+# Run OpenCode as usual
+opencode
 ```
 
-That's it! mcpflow-router automatically:
-- ✅ Disables your existing MCP servers
-- ✅ Configures itself as single MCP entry
-- ✅ Starts managing all your tools via smart search
+That's it. The installer automatically:
+- Configures built-in MCP servers (context7, grep_app, websearch)
+- Sets up the gateway launcher
+- Handles all wiring — no manual config needed
 
-## OpenCode Native Tools (Auto-ingest)
-
-The router auto-discovers OpenCode runtime tools through OpenCode's experimental
-HTTP endpoints, indexes them as `opencode-native:*`, and executes selected tools
-through OpenCode session APIs.
-
-Requires OpenCode `1.2.10+`.
-
-`npx mcpflow-router opencode install` automatically wires your `opencode`
-launcher so bare `opencode` uses router gateway mode. No extra user setup is
-required.
-
-For full per-message reduction across OpenCode built-ins and MCP tools, gateway
-mode is started automatically by that launcher. Manual run is still available:
+### Updating
 
 ```bash
-python -m mcp_tool_router.opencode_gateway_server
+npm install -g mcpflow-router@latest
+npx mcpflow-router opencode install
 ```
 
-Gateway mode is for OpenCode `--attach` / external HTTP-client flows.
+Existing configurations are migrated automatically.
 
 ### Install from Source
 
@@ -78,8 +49,15 @@ pip install -e mcp-server/
 npx mcpflow-router opencode install
 ```
 
-For manual configuration and advanced options, see the [Configuration Guide](docs/configuration.md).
-For host-native tool integration direction, see [Host Tool Routing Plan](docs/host-tool-routing.md).
+## Requirements
+
+- OpenCode 1.2.10+
+- Python 3.10+ (with httpx, pyyaml)
+- Node.js 18+
+
+## Configuration
+
+For environment variables and advanced options, see the [Configuration Guide](docs/configuration.md).
 
 ## License
 

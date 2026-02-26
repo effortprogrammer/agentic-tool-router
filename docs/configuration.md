@@ -1,93 +1,88 @@
 # Configuration Guide
 
-OpenCode native auto-ingest is the primary path.
-
-## OpenCode Native Auto-Ingest (Primary)
-
-Router can auto-discover OpenCode runtime tools via OpenCode experimental
-endpoints and register them into the catalog as `opencode-native:*`.
-
-Compatibility notes:
-
-- Endpoints used: `/experimental/tool/ids`, `/experimental/tool`, `/session/{id}/message`
-- Tested with OpenCode `1.2.10`
-- OpenCode does not publish a hard minimum version guarantee for these
-  experimental endpoints
-
-## Gateway Mode (Built-ins + MCP Reduction)
-
-To reduce both OpenCode built-in tools and MCP tools per message, run the
-OpenCode gateway and point your OpenCode server URL to the gateway.
+## Quick Start
 
 ```bash
-python -m mcp_tool_router.opencode_gateway_server
+npx mcpflow-router opencode install
 ```
 
-Default gateway bind: `127.0.0.1:4141`
+This auto-configures everything. The sections below are for advanced usage only.
 
-Environment variables:
+## How It Works
 
-- `ROUTER_GATEWAY_BIND` (default: `127.0.0.1`)
-- `ROUTER_GATEWAY_PORT` (default: `4141`)
-- `ROUTER_OPENCODE_UPSTREAM_URL` (optional explicit upstream OpenCode server URL)
-- `ROUTER_GATEWAY_TOP_K` (default: `20`)
-- `ROUTER_GATEWAY_BUDGET_TOKENS` (default: `1500`)
+The installer sets up a launcher shim that starts three components automatically:
 
-Autostart behavior:
+1. `opencode serve` — the OpenCode backend (port 4096)
+2. Gateway proxy — scores tools and controls visibility (port 4141)
+3. `opencode attach` — connects the TUI to the gateway
 
-- `npx mcpflow-router opencode install` automatically updates the `opencode` launcher.
-- The shim starts local OpenCode server/gateway if needed, then routes bare `opencode`
-  through `attach http://127.0.0.1:4141` automatically.
-- Subcommands like `opencode serve`, `opencode run`, `opencode mcp`, and
-  `opencode attach` pass through to the original binary unchanged.
-- Run `opencode` as your normal user (not `sudo`) so OpenCode uses the correct
-  home config/auth directories.
+Subcommands like `opencode serve`, `opencode mcp`, and `opencode attach` pass through to the original binary unchanged.
 
-## Auto-configure Options
+Run `opencode` as your normal user (not `sudo`) so OpenCode uses the correct home config and auth directories.
+
+## Gateway Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `ROUTER_GATEWAY_BIND` | `127.0.0.1` | Gateway bind address |
+| `ROUTER_GATEWAY_PORT` | `4141` | Gateway listen port |
+| `ROUTER_OPENCODE_UPSTREAM_URL` | `http://127.0.0.1:4096` | OpenCode serve upstream URL |
+| `ROUTER_GATEWAY_TIMEOUT_SEC` | `15` | Proxy request timeout (seconds) |
+| `ROUTER_GATEWAY_STREAM_TIMEOUT_SEC` | `0` (unlimited) | Streaming response timeout |
+| `ROUTER_GATEWAY_SELECT_TIMEOUT_SEC` | `2` | Tool selection timeout |
+| `ROUTER_GATEWAY_TOP_K` | `20` | Max candidate tools to score |
+| `ROUTER_GATEWAY_BUDGET_TOKENS` | `4000` | Token budget for selected tools |
+| `ROUTER_GATEWAY_LOG` | `$TMPDIR/mcpflow-gateway.log` | Gateway log file path |
+
+## Other Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENCODE_CONFIG` | `~/.config/opencode/opencode.json` | Path to OpenCode config |
+| `ROUTERD` | auto-detect | Override the tool-routerd daemon path |
+| `ROUTER_IGNORE_IDS` | _(empty)_ | Comma-separated MCP server IDs to skip |
+| `ROUTER_INCLUDE_DISABLED` | `true` | Include disabled MCP entries from config |
+| `ROUTER_SESSION_ID` | `default` | Session ID for working-set tracking |
+
+## Install Options
 
 ```bash
 npx mcpflow-router opencode install --help
 ```
 
 | Option | Description |
-|---------|-------------|
-| `--config <path>` | Path to OpenCode config (default: `~/.config/opencode/opencode.json`) |
-| `--router-id <name>` | Router MCP server ID (default: `router`) |
-| `--router-command <cmd>` | Override router daemon command |
-| `--keep-others` | Don't disable existing MCP servers |
+|---|---|
+| `--config <path>` | Path to OpenCode config file |
+| `--no-backup` | Skip creating config backup |
 | `--dry-run` | Show changes without applying |
 
-## Environment Variables
+## Compatibility
 
-| Variable                  | Default                            | Description                                     |
-| ------------------------- | ---------------------------------- | ----------------------------------------------- |
-| `OPENCODE_CONFIG`         | `~/.config/opencode/opencode.json` | Path to OpenCode config                         |
-| `ROUTERD`                 | auto-detect                        | Override the router daemon command              |
-| `ROUTER_IGNORE_IDS`       | _(empty)_                          | Comma-separated MCP server IDs to skip          |
-| `ROUTER_INCLUDE_DISABLED` | `true`                             | Include disabled MCP entries from config        |
-| `ROUTER_MCP_ID`           | _(empty)_                          | Router's own MCP ID (auto-added to ignore list) |
-| `ROUTER_SESSION_ID`       | `default`                          | Session ID for working-set tracking             |
+- Tested with OpenCode 1.2.10+
+- Uses OpenCode experimental endpoints: `/experimental/tool/ids`, `/experimental/tool`
+- Gateway proxies all OpenCode HTTP API paths transparently
 
-## Minimum MCP Tool Fields
+## Manual Gateway Run
 
-The router only requires MCP-standard fields:
+For advanced use cases, the gateway can be started independently:
 
-- `name`
-- `description` (optional but recommended)
-- `inputSchema` (or `input_schema`)
-
-Missing `tags`, `synonyms`, and `examples` are derived automatically from the
-tool name and description.
+```bash
+python -m mcp_tool_router.opencode_gateway_server
+```
 
 ## Repository Layout
 
 ```
-packages/
-  shared/    # Shared types (ToolCard, SearchQueryInput, etc.)
-  core/      # Search engines, tokenizer, working set, result reducer
-  daemon/    # tool-routerd JSON-RPC server
-  cli/       # CLI helper (opencode install)
-python/
-  mcp_tool_router/  # Python MCP server + hub + registry
-examples/
+src/              # TypeScript source
+  core/           # Search engine, tokenizer, working set, catalog
+  daemon/         # tool-routerd JSON-RPC server
+  shared/         # Shared types (ToolCard, etc.)
+mcp-server/       # Python package
+  mcp_tool_router/
+    opencode_gateway_server.py  # Gateway proxy
+    hub.py                      # Tool catalog + enrichments
+    router.py                   # Tool selection (daemon RPC)
+    registry.py                 # MCP server registry
+    opencode_config.py          # Config management
+docs/             # Documentation
 ```

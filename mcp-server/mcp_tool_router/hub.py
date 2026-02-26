@@ -482,6 +482,153 @@ def _merge_tool_definitions(
     return merged
 
 
+_NATIVE_TOOL_ENRICHMENTS: dict[str, dict[str, list[str]]] = {
+    "bash": {
+        "tags": [
+            "execute",
+            "command",
+            "shell",
+            "run",
+            "terminal",
+            "script",
+            "process",
+            "list",
+            "files",
+            "directory",
+            "install",
+            "build",
+            "test",
+            "git",
+            "npm",
+            "pip",
+            "docker",
+            "curl",
+            "wget",
+            "mkdir",
+            "rm",
+            "cp",
+            "mv",
+            "chmod",
+            "grep",
+            "find",
+            "ls",
+            "cat",
+            "echo",
+            "pipe",
+        ],
+        "synonyms": ["shell", "terminal", "command line", "cli", "exec"],
+    },
+    "read": {
+        "tags": [
+            "read",
+            "file",
+            "content",
+            "view",
+            "open",
+            "cat",
+            "display",
+            "show",
+            "text",
+            "source",
+            "code",
+            "inspect",
+            "peek",
+            "head",
+            "tail",
+        ],
+        "synonyms": ["cat", "view file", "open file", "read file", "show file"],
+    },
+    "write": {
+        "tags": [
+            "write",
+            "file",
+            "create",
+            "save",
+            "output",
+            "overwrite",
+            "new file",
+            "content",
+        ],
+        "synonyms": ["create file", "save file", "write file"],
+    },
+    "edit": {
+        "tags": [
+            "edit",
+            "modify",
+            "change",
+            "update",
+            "patch",
+            "replace",
+            "insert",
+            "delete",
+            "refactor",
+            "fix",
+            "line",
+        ],
+        "synonyms": ["modify file", "change file", "update file", "patch file"],
+    },
+    "glob": {
+        "tags": [
+            "glob",
+            "find",
+            "files",
+            "search",
+            "pattern",
+            "list",
+            "directory",
+            "match",
+            "wildcard",
+            "path",
+            "locate",
+            "discover",
+        ],
+        "synonyms": ["find files", "list files", "search files", "file search"],
+    },
+    "grep": {
+        "tags": [
+            "grep",
+            "search",
+            "find",
+            "pattern",
+            "regex",
+            "match",
+            "content",
+            "text",
+            "code",
+            "occurrences",
+            "ripgrep",
+        ],
+        "synonyms": ["search content", "find in files", "text search", "code search"],
+    },
+    "ls": {
+        "tags": ["list", "directory", "files", "folders", "contents", "browse", "tree"],
+        "synonyms": ["list files", "list directory", "show files", "directory listing"],
+    },
+    "diagnostics": {
+        "tags": [
+            "diagnostics",
+            "errors",
+            "warnings",
+            "lint",
+            "check",
+            "problems",
+            "issues",
+            "typescript",
+            "type",
+        ],
+        "synonyms": ["check errors", "find problems", "lint"],
+    },
+    "session_list": {
+        "tags": ["session", "list", "sessions", "history", "previous", "past"],
+        "synonyms": ["list sessions", "show sessions"],
+    },
+    "session_read": {
+        "tags": ["session", "read", "messages", "conversation", "history", "chat"],
+        "synonyms": ["read session", "show conversation"],
+    },
+}
+
+
 def _load_opencode_native_tools(
     config_path: str,
 ) -> tuple[dict[str, dict[str, HostToolSpec]], dict[str, list[dict[str, Any]]]]:
@@ -550,14 +697,19 @@ def _load_opencode_native_tools(
             execution="opencode",
             opencode_tool_id=tool_id,
         )
+        enrichment = _NATIVE_TOOL_ENRICHMENTS.get(tool_id, {})
+        base_tags = ["opencode", "native"]
+        extra_tags = enrichment.get("tags", [])
+        base_synonyms = [tool_id]
+        extra_synonyms = enrichment.get("synonyms", [])
         definitions.append(
             {
                 "id": tool_id,
                 "name": tool_id,
                 "description": str(description or f"OpenCode native tool: {tool_id}"),
                 "inputSchema": input_schema,
-                "tags": ["opencode", "native"],
-                "synonyms": [tool_id],
+                "tags": base_tags + extra_tags,
+                "synonyms": base_synonyms + extra_synonyms,
                 "annotations": {"idempotentHint": False},
             }
         )

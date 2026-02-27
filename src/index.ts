@@ -104,9 +104,16 @@ function main(): void {
   }
 
   const target = args[0];
-  if (target && args.length >= 2 && args[1] === "install" && isInstallTarget(target)) {
-    installTarget(target, args.slice(2));
-    return;
+  if (target && args.length >= 2 && isInstallTarget(target)) {
+    const action = args[1];
+    if (action === "install") {
+      installTarget(target, args.slice(2));
+      return;
+    }
+    if (action === "uninstall") {
+      uninstallTarget(target, args.slice(2));
+      return;
+    }
   }
 
   console.error(`Unknown command: ${args.join(" ")}`);
@@ -115,6 +122,11 @@ function main(): void {
 }
 
 function installTarget(target: InstallTarget, args: string[]): void {
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+
   const profile = INSTALL_PROFILES[target];
   if (profile.kind === "unsupported") {
     console.error(
@@ -184,6 +196,102 @@ function installTarget(target: InstallTarget, args: string[]): void {
   }
 }
 
+function uninstallTarget(target: InstallTarget, args: string[]): void {
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+
+  const profile = INSTALL_PROFILES[target];
+  if (profile.kind === "unsupported") {
+    console.error(
+      `${profile.displayName} uninstall is not supported yet. ${profile.reason}`,
+    );
+    process.exit(1);
+  }
+
+  if (target !== "opencode") {
+    console.error(`${profile.displayName} uninstall is not supported yet.`);
+    process.exit(1);
+  }
+
+  const options = parseUninstallArgs(args);
+  const configPath = expandHome(
+    options.config || process.env[profile.envVar] || profile.defaultConfigPath,
+  );
+  const opencodePath = findCommand("opencode");
+  const opencodeBackupPath = opencodePath ? `${opencodePath}.bak` : null;
+  const opencodeRealBinaryPath = opencodePath
+    ? `${opencodePath}${OPENCODE_REAL_SUFFIX}`
+    : null;
+  const ohMyOpencodePath = path.join(path.dirname(configPath), "oh-my-opencode.json");
+
+  let changed = false;
+
+  changed =
+    restoreFromBak(configPath, options.dryRun, "OpenCode config") || changed;
+  changed =
+    restoreFromBak(
+      ohMyOpencodePath,
+      options.dryRun,
+      "oh-my-opencode config",
+    ) || changed;
+
+  if (!opencodePath) {
+    console.warn(
+      "[mcpflow] Could not find 'opencode' binary in PATH; skipped launcher restore.",
+    );
+  } else {
+    changed =
+      restoreOpencodeBinary(
+        opencodePath,
+        options.dryRun,
+      ) || changed;
+  }
+
+  if (!options.keepBackups) {
+    changed =
+      removeFileIfExists(`${configPath}.bak`, options.dryRun, "config backup") ||
+      changed;
+    changed =
+      removeFileIfExists(
+        `${ohMyOpencodePath}.bak`,
+        options.dryRun,
+        "oh-my-opencode backup",
+      ) || changed;
+    if (opencodeBackupPath) {
+      changed =
+        removeFileIfExists(
+          opencodeBackupPath,
+          options.dryRun,
+          "opencode launcher backup",
+        ) || changed;
+    }
+    if (opencodeRealBinaryPath) {
+      changed =
+        removeFileIfExists(
+          opencodeRealBinaryPath,
+          options.dryRun,
+          "managed opencode real binary",
+        ) || changed;
+    }
+  }
+
+  if (!changed) {
+    console.log(
+      "[mcpflow] No managed OpenCode install artifacts were found. Nothing changed.",
+    );
+    return;
+  }
+
+  if (options.dryRun) {
+    console.log("[mcpflow] Dry run complete.");
+    return;
+  }
+
+  console.log("[mcpflow] OpenCode uninstall complete.");
+}
+
 function isInstallTarget(value: string): value is InstallTarget {
   return value in INSTALL_PROFILES;
 }
@@ -248,6 +356,47 @@ function parseInstallArgs(args: string[]): {
     routerId,
     disableOthers,
     createBackup,
+    dryRun,
+  };
+}
+
+function parseUninstallArgs(args: string[]): {
+  config: string | null;
+  keepBackups: boolean;
+  dryRun: boolean;
+} {
+  let config: string | null = null;
+  let keepBackups = false;
+  let dryRun = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--config") {
+      const value = args[i + 1];
+      if (!value) {
+        throw new Error("--config requires a value");
+      }
+      config = value;
+      i += 1;
+      continue;
+    }
+    if (arg === "--keep-backups") {
+      keepBackups = true;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg && arg.startsWith("--")) {
+      console.error(`Unknown option: ${arg}`);
+      process.exit(1);
+    }
+  }
+
+  return {
+    config,
+    keepBackups,
     dryRun,
   };
 }
@@ -385,10 +534,18 @@ function ensureOpencodeGatewayShim(
   const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
   if (hasManagedShim) {
     if (!fs.existsSync(realBinaryPath)) {
-      console.warn(
-        `[mcpflow] Found managed OpenCode shim but missing backup binary at ${realBinaryPath}. Skipping shim update.`,
-      );
-      return;
+      const launcherBackupPath = `${opencodePath}.bak`;
+      if (fs.existsSync(launcherBackupPath)) {
+        fs.copyFileSync(launcherBackupPath, realBinaryPath);
+        console.warn(
+          `[mcpflow] Recovered missing managed OpenCode binary from ${launcherBackupPath}.`,
+        );
+      } else {
+        console.warn(
+          `[mcpflow] Found managed OpenCode shim but missing backup binary at ${realBinaryPath}. Skipping shim update.`,
+        );
+        return;
+      }
     }
   } else {
     if (createBackup) {
@@ -455,7 +612,17 @@ function buildOpencodeShim(
     "REAL_OPENCODE=" + quotedReal,
     "GATEWAY_HOST=${ROUTER_GATEWAY_BIND:-127.0.0.1}",
     "GATEWAY_PORT=${ROUTER_GATEWAY_PORT:-4141}",
-    "UPSTREAM_URL=${ROUTER_OPENCODE_UPSTREAM_URL:-http://127.0.0.1:4096}",
+    "DEFAULT_UPSTREAM_URL=http://127.0.0.1:4096",
+    "UPSTREAM_URL=${ROUTER_OPENCODE_UPSTREAM_URL:-${OPENCODE_UPSTREAM_URL:-$DEFAULT_UPSTREAM_URL}}",
+    "use_local_upstream=1",
+    "if [[ \"$UPSTREAM_URL\" != \"$DEFAULT_UPSTREAM_URL\" ]]; then",
+    "  if curl -sf --max-time 1 \"$UPSTREAM_URL/experimental/tool/ids\" >/dev/null 2>&1; then",
+    "    use_local_upstream=0",
+    "  else",
+    "    echo \"[mcpflow] Ignoring stale ROUTER_OPENCODE_UPSTREAM_URL=$UPSTREAM_URL (unreachable); using $DEFAULT_UPSTREAM_URL.\" >&2",
+    "    UPSTREAM_URL=\"$DEFAULT_UPSTREAM_URL\"",
+    "  fi",
+    "fi",
     "export ROUTER_OPENCODE_UPSTREAM_URL=\"$UPSTREAM_URL\"",
     "started_server=0",
     "started_gateway=0",
@@ -487,40 +654,145 @@ function buildOpencodeShim(
     "      ;;",
     "  esac",
     "fi",
-    "# Kill stale opencode serve (may have old config)",
-    "existing_serve_pids=$(lsof -tiTCP:4096 -sTCP:LISTEN 2>/dev/null || true)",
-    "if [[ -n \"$existing_serve_pids\" ]]; then",
-    "  kill $existing_serve_pids >/dev/null 2>&1 || true",
-    "  sleep 0.5",
-    "fi",
+    "SERVER_LOG_FILE=${ROUTER_OPENCODE_SERVER_LOG:-${TMPDIR:-/tmp}/mcpflow-opencode-serve.log}",
+    "if [[ \"$use_local_upstream\" -eq 1 ]]; then",
+    "  # Kill stale local opencode serve (may have old config)",
+    "  existing_serve_pids=$(lsof -tiTCP:4096 -sTCP:LISTEN 2>/dev/null || true)",
+    "  if [[ -n \"$existing_serve_pids\" ]]; then",
+    "    kill $existing_serve_pids >/dev/null 2>&1 || true",
+    "    sleep 0.5",
+    "  fi",
     "",
-    "# Start fresh opencode serve",
-    "\"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >/dev/null 2>&1 &",
-    "server_pid=$!",
-    "started_server=1",
-    "for _ in {1..100}; do",
-    "  if curl -sf --max-time 1 http://127.0.0.1:4096/experimental/tool/ids >/dev/null 2>&1; then",
-"    break",
-"  fi",
-    "  sleep 0.1",
-"done",
+    "  # Start fresh local opencode serve",
+    "  \"$REAL_OPENCODE\" serve --hostname=127.0.0.1 --port=4096 >\"$SERVER_LOG_FILE\" 2>&1 &",
+    "  server_pid=$!",
+    "  started_server=1",
+    "  upstream_ready=0",
+    "  for _ in {1..100}; do",
+    "    if curl -sf --max-time 1 \"$UPSTREAM_URL/experimental/tool/ids\" >/dev/null 2>&1; then",
+    "      upstream_ready=1",
+    "      break",
+    "    fi",
+    "    sleep 0.1",
+    "  done",
+    "  if [[ \"$upstream_ready\" -ne 1 ]]; then",
+    "    echo \"[mcpflow] Failed to start OpenCode upstream at $UPSTREAM_URL.\" >&2",
+    "    if [[ -f \"$SERVER_LOG_FILE\" ]]; then",
+    "      echo \"[mcpflow] Last OpenCode serve logs:\" >&2",
+    "      tail -n 40 \"$SERVER_LOG_FILE\" >&2 || true",
+    "    fi",
+    "    exit 1",
+    "  fi",
+    "fi",
     "existing_gateway_pids=$(lsof -tiTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN 2>/dev/null || true)",
     "if [[ -n \"$existing_gateway_pids\" ]]; then",
     "  kill $existing_gateway_pids >/dev/null 2>&1 || true",
     "  sleep 0.1",
     "fi",
-    ` ${gatewayLaunch} >/dev/null 2>&1 &`,
+    "GATEWAY_LOG_FILE=${ROUTER_OPENCODE_GATEWAY_LOG:-${TMPDIR:-/tmp}/mcpflow-opencode-gateway.log}",
+    ` ${gatewayLaunch} >"$GATEWAY_LOG_FILE" 2>&1 &`,
     "gateway_pid=$!",
     "started_gateway=1",
+    "gateway_ready=0",
     "for _ in {1..80}; do",
     "  if lsof -nP -iTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN >/dev/null 2>&1; then",
+    "    gateway_ready=1",
     "    break",
     "  fi",
     "  sleep 0.05",
     "done",
+    "if [[ \"$gateway_ready\" -ne 1 ]]; then",
+    "  echo \"[mcpflow] Failed to start gateway on ${GATEWAY_HOST}:${GATEWAY_PORT}.\" >&2",
+    "  if [[ -f \"$GATEWAY_LOG_FILE\" ]]; then",
+    "    echo \"[mcpflow] Last gateway logs:\" >&2",
+    "    tail -n 40 \"$GATEWAY_LOG_FILE\" >&2 || true",
+    "  fi",
+    "  exit 1",
+    "fi",
     "\"$REAL_OPENCODE\" attach \"http://${GATEWAY_HOST}:${GATEWAY_PORT}\" \"$@\"",
     "",
   ].join("\n");
+}
+
+function restoreFromBak(
+  filePath: string,
+  dryRun: boolean,
+  label: string,
+): boolean {
+  const bakPath = `${filePath}.bak`;
+  if (!fs.existsSync(bakPath)) {
+    return false;
+  }
+  if (dryRun) {
+    console.log(`[mcpflow] Would restore ${label}: ${bakPath} -> ${filePath}`);
+    return true;
+  }
+  fs.copyFileSync(bakPath, filePath);
+  console.log(`[mcpflow] Restored ${label}: ${bakPath} -> ${filePath}`);
+  return true;
+}
+
+function restoreOpencodeBinary(opencodePath: string, dryRun: boolean): boolean {
+  const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
+  if (fs.existsSync(realBinaryPath)) {
+    if (dryRun) {
+      console.log(
+        `[mcpflow] Would restore opencode launcher: ${realBinaryPath} -> ${opencodePath}`,
+      );
+      return true;
+    }
+    fs.copyFileSync(realBinaryPath, opencodePath);
+    fs.chmodSync(opencodePath, 0o755);
+    console.log(
+      `[mcpflow] Restored opencode launcher: ${realBinaryPath} -> ${opencodePath}`,
+    );
+    return true;
+  }
+
+  const launcherContent = safeReadText(opencodePath);
+  if (
+    launcherContent !== null &&
+    launcherContent.includes(OPENCODE_SHIM_MARKER)
+  ) {
+    const launcherBakPath = `${opencodePath}.bak`;
+    if (fs.existsSync(launcherBakPath)) {
+      if (dryRun) {
+        console.log(
+          `[mcpflow] Would restore opencode launcher: ${launcherBakPath} -> ${opencodePath}`,
+        );
+        return true;
+      }
+      fs.copyFileSync(launcherBakPath, opencodePath);
+      fs.chmodSync(opencodePath, 0o755);
+      console.log(
+        `[mcpflow] Restored opencode launcher: ${launcherBakPath} -> ${opencodePath}`,
+      );
+      return true;
+    }
+
+    console.warn(
+      `[mcpflow] Managed OpenCode shim found at ${opencodePath} but no backup binary was found.`,
+    );
+  }
+
+  return false;
+}
+
+function removeFileIfExists(
+  filePath: string,
+  dryRun: boolean,
+  label: string,
+): boolean {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+  if (dryRun) {
+    console.log(`[mcpflow] Would remove ${label}: ${filePath}`);
+    return true;
+  }
+  fs.unlinkSync(filePath);
+  console.log(`[mcpflow] Removed ${label}: ${filePath}`);
+  return true;
 }
 
 function shSingleQuote(value: string): string {
@@ -654,7 +926,7 @@ function findPython(): string | null {
 function printHelp(): void {
   console.log(
     [
-      "mcpflow-router <target> install [options]",
+      "mcpflow-router <target> <install|uninstall> [options]",
       "",
       "Targets:",
       "  opencode   OpenCode JSON config (~/.config/opencode/opencode.json)",
@@ -662,13 +934,18 @@ function printHelp(): void {
       "  codex      Reserved target (TOML installer not yet enabled)",
       "  openclaw   OpenClaw JSON config (~/.config/openclaw/openclaw.json)",
       "",
-      "Options:",
+      "Install options:",
       "  --config <path>           Override target config path",
       "  --router-id <id>          Legacy router MCP id to remove (default: router)",
       "  --keep-others             Keep existing enabled flags for other MCP entries",
       "  --disable-others          Disable all other MCP entries (default)",
       "  --no-backup               Do not create a .bak backup",
       "  --dry-run                 Print changes without writing",
+      "",
+      "Uninstall options (opencode):",
+      "  --config <path>           Override OpenCode config path",
+      "  --keep-backups            Keep .bak/.mcpflow-real artifacts after restore",
+      "  --dry-run                 Print actions without writing",
       "",
       "OpenCode note:",
       "  After `opencode install`, just run `opencode` (without sudo).",

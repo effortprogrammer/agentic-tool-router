@@ -28,6 +28,14 @@ Then just run `opencode` as usual. The installer automatically:
 - Handles all wiring — no manual config needed
 - Migrates existing configurations on update
 
+To cleanly roll back:
+
+```bash
+npx mcpflow-router opencode uninstall
+```
+
+`opencode uninstall` restores launcher/config backups and removes managed artifacts by default.
+
 ### Install from Source
 
 ```bash

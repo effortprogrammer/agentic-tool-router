@@ -20,6 +20,12 @@ Subcommands like `opencode serve`, `opencode mcp`, and `opencode attach` pass th
 
 Run `opencode` as your normal user (not `sudo`) so OpenCode uses the correct home config and auth directories.
 
+If you need to revert everything:
+
+```bash
+npx mcpflow-router opencode uninstall
+```
+
 ## Gateway Environment Variables
 
 | Variable | Default | Description |
@@ -27,6 +33,9 @@ Run `opencode` as your normal user (not `sudo`) so OpenCode uses the correct hom
 | `ROUTER_GATEWAY_BIND` | `127.0.0.1` | Gateway bind address |
 | `ROUTER_GATEWAY_PORT` | `4141` | Gateway listen port |
 | `ROUTER_OPENCODE_UPSTREAM_URL` | `http://127.0.0.1:4096` | OpenCode serve upstream URL |
+| `OPENCODE_UPSTREAM_URL` | _(legacy fallback)_ | Legacy upstream URL override; used only if router var is unset |
+| `ROUTER_OPENCODE_SERVER_LOG` | `$TMPDIR/mcpflow-opencode-serve.log` | Local `opencode serve` log file path |
+| `ROUTER_OPENCODE_GATEWAY_LOG` | `$TMPDIR/mcpflow-opencode-gateway.log` | Gateway launcher log file path |
 | `ROUTER_GATEWAY_TIMEOUT_SEC` | `15` | Proxy request timeout (seconds) |
 | `ROUTER_GATEWAY_STREAM_TIMEOUT_SEC` | `0` (unlimited) | Streaming response timeout |
 | `ROUTER_GATEWAY_SELECT_TIMEOUT_SEC` | `2` | Tool selection timeout |
@@ -55,6 +64,18 @@ npx mcpflow-router opencode install --help
 | `--config <path>` | Path to OpenCode config file |
 | `--no-backup` | Skip creating config backup |
 | `--dry-run` | Show changes without applying |
+
+## Uninstall Options
+
+```bash
+npx mcpflow-router opencode uninstall --help
+```
+
+| Option | Description |
+|---|---|
+| `--config <path>` | Path to OpenCode config file |
+| `--keep-backups` | Keep `.bak` / `.mcpflow-real` artifacts after restore |
+| `--dry-run` | Show restore/remove actions without applying |
 
 ## Compatibility
 

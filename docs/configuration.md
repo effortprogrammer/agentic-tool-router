@@ -8,6 +8,10 @@ npx mcpflow-router opencode install
 
 This auto-configures everything. The sections below are for advanced usage only.
 
+The installer auto-bootstraps gateway Python dependencies into a user-local venv at
+`$XDG_CACHE_HOME/mcpflow-router/gateway-venv` (or `~/.cache/mcpflow-router/gateway-venv`)
+when your system Python does not already have `httpx` and `pyyaml`.
+
 ## How It Works
 
 The installer sets up a launcher shim that starts three components automatically:

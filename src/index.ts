@@ -35,6 +35,7 @@ type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 
 const GATEWAY_MODULE = "mcp_tool_router.opencode_gateway_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
+const REQUIRED_IMPORTS = ["httpx", "yaml"];
 
 const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   context7: {
@@ -843,7 +844,7 @@ function resolvePythonModuleCommand(
     const venvPython = path.join(monorepoRoot, ".venv", "bin", "python3");
     if (
       fs.existsSync(venvPython) &&
-      canImport(venvPython, "httpx", env)
+      canImportAll(venvPython, REQUIRED_IMPORTS, env)
     ) {
       return { command: [venvPython, "-m", moduleName], env };
     }
@@ -853,12 +854,18 @@ function resolvePythonModuleCommand(
   const systemPython = findPython();
   if (
     systemPython !== null &&
-    canImport(systemPython, "httpx", env)
+    canImportAll(systemPython, REQUIRED_IMPORTS, env)
   ) {
     return { command: [systemPython, "-m", moduleName], env };
   }
 
-  // 3. uv run — auto-installs deps in ephemeral env
+  // 3. Managed user venv — bootstrap deps once under ~/.cache
+  const managedVenvPython = ensureManagedGatewayPython(systemPython, env);
+  if (managedVenvPython !== null) {
+    return { command: [managedVenvPython, "-m", moduleName], env };
+  }
+
+  // 4. uv run — auto-installs deps in ephemeral env
   const uv = findCommand("uv");
   if (uv !== null) {
     const withArgs = REQUIRED_PACKAGES.flatMap((pkg) => ["--with", pkg]);
@@ -868,20 +875,70 @@ function resolvePythonModuleCommand(
     };
   }
 
-  // 4. Fallback — bare python3 (may fail if deps missing)
+  // 5. Fallback — bare python3 (may fail if deps missing)
   return { command: defaultCommand, env };
 }
 
-function canImport(
+function canImportAll(
   python: string,
-  pkg: string,
+  modules: string[],
   env: Record<string, string>,
 ): boolean {
-  const r = spawnSync(python, ["-c", `import ${pkg}`], {
+  const script = modules.map((mod) => `import ${mod}`).join("; ");
+  const r = spawnSync(python, ["-c", script], {
     stdio: "pipe",
     env: { ...process.env, ...env },
   });
   return r.status === 0;
+}
+
+function ensureManagedGatewayPython(
+  systemPython: string | null,
+  env: Record<string, string>,
+): string | null {
+  if (systemPython === null) {
+    return null;
+  }
+
+  const cacheHome = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  const managedDir = path.join(cacheHome, "mcpflow-router", "gateway-venv");
+  const managedPython = path.join(managedDir, "bin", "python3");
+
+  if (!fs.existsSync(managedPython)) {
+    fs.mkdirSync(path.dirname(managedDir), { recursive: true });
+    const create = spawnSync(systemPython, ["-m", "venv", managedDir], {
+      stdio: "pipe",
+    });
+    if (create.status !== 0) {
+      return null;
+    }
+  }
+
+  if (!canImportAll(managedPython, REQUIRED_IMPORTS, env)) {
+    const install = spawnSync(
+      managedPython,
+      [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--quiet",
+        ...REQUIRED_PACKAGES,
+      ],
+      {
+        stdio: "pipe",
+      },
+    );
+    if (install.status !== 0) {
+      return null;
+    }
+  }
+
+  if (!canImportAll(managedPython, REQUIRED_IMPORTS, env)) {
+    return null;
+  }
+
+  return managedPython;
 }
 
 function findCommand(name: string): string | null {

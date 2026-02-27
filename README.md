@@ -25,8 +25,17 @@ npx mcpflow-router opencode install
 Then just run `opencode` as usual. The installer automatically:
 - Configures built-in MCP servers (context7, grep_app, websearch)
 - Sets up the gateway launcher
+- Bootstraps gateway Python dependencies in a user-local venv when needed
 - Handles all wiring — no manual config needed
 - Migrates existing configurations on update
+
+To cleanly roll back:
+
+```bash
+npx mcpflow-router opencode uninstall
+```
+
+`opencode uninstall` restores launcher/config backups and removes managed artifacts by default.
 
 ### Install from Source
 

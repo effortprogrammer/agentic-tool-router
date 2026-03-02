@@ -49,7 +49,7 @@ npx mcpflow-router opencode install
 
 ## Requirements
 
-- OpenCode 1.2.10+
+- OpenCode (latest version recommended)
 - Python 3.10+ (with httpx, pyyaml)
 - Node.js 18+
 

@@ -54,8 +54,10 @@ Context Mode reduces tool output bloat by routing outputs through tiers:
 | Tier | Threshold | Action |
 |---|---|---|
 | L0 | < 1 KB | Pass through unchanged |
-| L1 | 1-10 KB | Summary + file link |
-| L2 | > 10 KB | Agent delegation (falls back to L1) |
+| L1 | 1-10 KB | Algorithmic summary + file link |
+| L2 | > 10 KB | L1 summary (agent delegation planned) |
+
+> **Note:** L2 currently uses the same algorithmic summary as L1. Agent-based intelligent summarization is planned for a future release when the agent interface is finalized.
 
 ### Context Mode Environment Variables
 

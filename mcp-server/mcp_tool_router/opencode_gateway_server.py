@@ -17,6 +17,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from .hub import ToolRouterHub, _resolve_opencode_server_url
+from .context_router import process_stream_chunk
 
 
 def _setup_logging() -> logging.Logger:
@@ -224,6 +225,9 @@ class OpenCodeGatewayHandler(BaseHTTPRequestHandler):
                             chunk = response.read(8192)
                         if not chunk:
                             break
+                        # Context Mode v2: Route tool outputs through tiers
+                        if is_message_post:
+                            chunk = process_stream_chunk(chunk)
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         _chunk_n += 1

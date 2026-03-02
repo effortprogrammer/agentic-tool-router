@@ -47,6 +47,38 @@ npx mcpflow-router opencode uninstall
 | `ROUTER_GATEWAY_BUDGET_TOKENS` | `4000` | Token budget for selected tools |
 | `ROUTER_GATEWAY_LOG` | `$TMPDIR/mcpflow-gateway.log` | Gateway log file path |
 
+## Context Mode v2 (Output Routing)
+
+Context Mode reduces tool output bloat by routing outputs through tiers:
+
+| Tier | Threshold | Action |
+|---|---|---|
+| L0 | < 1 KB | Pass through unchanged |
+| L1 | 1-10 KB | Summary + file link |
+| L2 | > 10 KB | Agent delegation (falls back to L1) |
+
+### Context Mode Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `CONTEXT_MODE_DISABLED` | _(unset)_ | Set to any value to disable output routing |
+| `CONTEXT_MODE_DIR` | `/tmp/ctx` | Storage directory for original outputs |
+| `CONTEXT_MODE_MAX_MB` | `100` | Max storage size before LRU cleanup |
+| `CONTEXT_MODE_L0_THRESHOLD` | `1024` | L0/L1 boundary in bytes |
+| `CONTEXT_MODE_L1_THRESHOLD` | `10240` | L1/L2 boundary in bytes |
+| `CONTEXT_MODE_TOOL_OVERRIDES` | _(empty)_ | Force tools to tiers, e.g. `glob:L0,playwright:L2` |
+
+### How Context Mode Works
+
+When a tool produces output larger than L0 threshold:
+
+1. Original output is saved to `/tmp/ctx/{tool}_{hash}.txt`
+2. A summary is generated showing first/last lines and file link
+3. The summary replaces the full output in the LLM context
+4. The model can still access full output via `cat /tmp/ctx/...`
+
+This complements mcpflow-router's tool selection (input optimization) with output optimization.
+
 ## Other Environment Variables
 
 | Variable | Default | Description |

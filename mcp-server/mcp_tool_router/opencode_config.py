@@ -60,7 +60,7 @@ def apply_router_config(
                 entry["enabled"] = True
 
     _write_config(path, payload, create_backup=create_backup)
-    _reenable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
+    # _reenable_oh_my_opencode_mcps removed: user config should be respected
     return payload
 
 
@@ -135,7 +135,7 @@ def main() -> int:
         return 0
 
     _write_config(path, payload, create_backup=args.create_backup)
-    _reenable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
+    # _reenable_oh_my_opencode_mcps removed: user config should be respected
     return 0
 
 

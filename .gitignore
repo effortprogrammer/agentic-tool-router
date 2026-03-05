@@ -38,3 +38,8 @@ coverage/
 
 # Session docs
 *.md
+
+bun.lock
+iTerm2
+mcpflow-router@*
+node

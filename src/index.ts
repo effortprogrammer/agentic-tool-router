@@ -735,17 +735,76 @@ function restoreFromBak(
 
 function restoreOpencodeBinary(opencodePath: string, dryRun: boolean): boolean {
   const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
+  const launcherBakPath = `${opencodePath}.bak`;
+
+  const chooseRestoreSource = (
+    preferredPath: string,
+    preferredLabel: string,
+    fallbackPaths: Array<{ path: string; label: string }>,
+  ): { path: string; label: string; stalePreferred: boolean } => {
+    const preferredVersion = getOpencodeVersion(preferredPath);
+    let best = {
+      path: preferredPath,
+      label: preferredLabel,
+      version: preferredVersion,
+      stalePreferred: false,
+    };
+
+    for (const candidate of fallbackPaths) {
+      const candidateVersion = getOpencodeVersion(candidate.path);
+      if (!candidateVersion) {
+        continue;
+      }
+      if (!best.version || compareSemver(candidateVersion, best.version) > 0) {
+        best = {
+          path: candidate.path,
+          label: candidate.label,
+          version: candidateVersion,
+          stalePreferred:
+            preferredVersion !== null &&
+            compareSemver(candidateVersion, preferredVersion) > 0,
+        };
+      }
+    }
+
+    return {
+      path: best.path,
+      label: best.label,
+      stalePreferred: best.stalePreferred,
+    };
+  };
+
+  const pathCandidates = findAllCommands("opencode")
+    .map((candidate) => path.resolve(candidate))
+    .filter((candidate) => candidate !== path.resolve(opencodePath))
+    .filter((candidate) => candidate !== path.resolve(realBinaryPath))
+    .filter((candidate) => candidate !== path.resolve(launcherBakPath))
+    .map((candidate) => ({
+      path: candidate,
+      label: `PATH candidate (${candidate})`,
+    }));
+
   if (fs.existsSync(realBinaryPath)) {
+    const chosen = chooseRestoreSource(
+      realBinaryPath,
+      `${realBinaryPath}`,
+      pathCandidates,
+    );
+    if (chosen.stalePreferred) {
+      console.warn(
+        `[mcpflow] Managed OpenCode binary at ${realBinaryPath} appears stale. Using newer ${chosen.label}.`,
+      );
+    }
     if (dryRun) {
       console.log(
-        `[mcpflow] Would restore opencode launcher: ${realBinaryPath} -> ${opencodePath}`,
+        `[mcpflow] Would restore opencode launcher: ${chosen.path} -> ${opencodePath}`,
       );
       return true;
     }
-    fs.copyFileSync(realBinaryPath, opencodePath);
+    fs.copyFileSync(chosen.path, opencodePath);
     fs.chmodSync(opencodePath, 0o755);
     console.log(
-      `[mcpflow] Restored opencode launcher: ${realBinaryPath} -> ${opencodePath}`,
+      `[mcpflow] Restored opencode launcher: ${chosen.path} -> ${opencodePath}`,
     );
     return true;
   }
@@ -755,18 +814,27 @@ function restoreOpencodeBinary(opencodePath: string, dryRun: boolean): boolean {
     launcherContent !== null &&
     launcherContent.includes(OPENCODE_SHIM_MARKER)
   ) {
-    const launcherBakPath = `${opencodePath}.bak`;
     if (fs.existsSync(launcherBakPath)) {
+      const chosen = chooseRestoreSource(
+        launcherBakPath,
+        `${launcherBakPath}`,
+        pathCandidates,
+      );
+      if (chosen.stalePreferred) {
+        console.warn(
+          `[mcpflow] Backup OpenCode launcher at ${launcherBakPath} appears stale. Using newer ${chosen.label}.`,
+        );
+      }
       if (dryRun) {
         console.log(
-          `[mcpflow] Would restore opencode launcher: ${launcherBakPath} -> ${opencodePath}`,
+          `[mcpflow] Would restore opencode launcher: ${chosen.path} -> ${opencodePath}`,
         );
         return true;
       }
-      fs.copyFileSync(launcherBakPath, opencodePath);
+      fs.copyFileSync(chosen.path, opencodePath);
       fs.chmodSync(opencodePath, 0o755);
       console.log(
-        `[mcpflow] Restored opencode launcher: ${launcherBakPath} -> ${opencodePath}`,
+        `[mcpflow] Restored opencode launcher: ${chosen.path} -> ${opencodePath}`,
       );
       return true;
     }
@@ -948,6 +1016,50 @@ function findCommand(name: string): string | null {
     return out || null;
   }
   return null;
+}
+
+function findAllCommands(name: string): string[] {
+  const r = spawnSync("which", ["-a", name], { stdio: "pipe" });
+  if (r.status !== 0) {
+    return [];
+  }
+  const out = r.stdout?.toString() ?? "";
+  const seen = new Set<string>();
+  const results: string[] = [];
+  for (const line of out.split("\n")) {
+    const candidate = line.trim();
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    results.push(candidate);
+  }
+  return results;
+}
+
+function getOpencodeVersion(commandPath: string): string | null {
+  if (!fs.existsSync(commandPath)) {
+    return null;
+  }
+  const r = spawnSync(commandPath, ["-v"], { stdio: "pipe" });
+  if (r.status !== 0) {
+    return null;
+  }
+  const output = `${r.stdout?.toString() ?? ""}\n${r.stderr?.toString() ?? ""}`;
+  const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
+  return match?.[1] ?? null;
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string): [number, number, number] => {
+    const [major, minor, patch] = v.split(".").map((part) => Number(part));
+    return [major || 0, minor || 0, patch || 0];
+  };
+  const [aMajor, aMinor, aPatch] = parse(a);
+  const [bMajor, bMinor, bPatch] = parse(b);
+  if (aMajor !== bMajor) return aMajor - bMajor;
+  if (aMinor !== bMinor) return aMinor - bMinor;
+  return aPatch - bPatch;
 }
 
 function findMonorepoRoot(): string | null {

@@ -50,6 +50,7 @@ class ToolRouterHub:
         self._host_tool_definitions: dict[str, list[dict[str, Any]]] = (
             host_tool_definitions or {}
         )
+        self._ignore_tool_ids: set[str] = set()
 
     @classmethod
     def from_yaml(
@@ -67,6 +68,7 @@ class ToolRouterHub:
         auto_sync: bool = True,
         include_disabled: bool = False,
         ignore_ids: Iterable[str] | None = None,
+        ignore_tool_ids: Iterable[str] | None = None,
     ) -> "ToolRouterHub":
         registry, host_tools, host_tool_definitions = cls.load_opencode_runtime(
             path,
@@ -74,7 +76,7 @@ class ToolRouterHub:
             ignore_ids=ignore_ids,
         )
         router = ToolRouter(routerd_path=routerd_path)
-        return cls(
+        hub = cls(
             registry,
             router,
             auto_sync=auto_sync,
@@ -82,6 +84,8 @@ class ToolRouterHub:
             host_tools=host_tools,
             host_tool_definitions=host_tool_definitions,
         )
+        hub._ignore_tool_ids = set(ignore_tool_ids or [])
+        return hub
 
     @classmethod
     def load_opencode_runtime(
@@ -180,7 +184,7 @@ class ToolRouterHub:
             raise ValueError(f"Server '{server_id}' is disabled.")
         try:
             client = self._ensure_client(server)
-            self._router.sync_from_mcp(server_id, client)
+            self._router.sync_from_mcp(server_id, client, ignore_tool_ids=self._ignore_tool_ids)
         except Exception as exc:
             if server.transport == "http" and not raise_on_error:
                 print(

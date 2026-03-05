@@ -359,12 +359,13 @@ def _parse_id_list(value: str | None) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
+def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], list[str], str]:
     config_path = os.environ.get("OPENCODE_CONFIG", "~/.config/opencode/opencode.json")
     include_disabled = os.environ.get(
         "ROUTER_INCLUDE_DISABLED", "true"
     ).lower() not in {"0", "false", "no"}
     ignore_ids = _parse_id_list(os.environ.get("ROUTER_IGNORE_IDS"))
+    ignore_tool_ids = _parse_id_list(os.environ.get("ROUTER_IGNORE_TOOL_IDS"))
     router_id = os.environ.get("ROUTER_MCP_ID")
     if router_id:
         ignore_ids.add(router_id)
@@ -377,8 +378,9 @@ def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
         auto_sync=True,
         include_disabled=include_disabled,
         ignore_ids=sorted(ignore_ids),
+        ignore_tool_ids=sorted(ignore_tool_ids),
     )
-    return hub, config_path, include_disabled, sorted(ignore_ids), routerd_cmd
+    return hub, config_path, include_disabled, sorted(ignore_ids), sorted(ignore_tool_ids), routerd_cmd
 
 
 class _ConfigWatcher(threading.Thread):
@@ -438,7 +440,7 @@ class _ConfigWatcher(threading.Thread):
 
 
 def main() -> int:
-    hub, config_path, include_disabled, ignore_ids, routerd_cmd = _load_hub()
+    hub, config_path, include_disabled, ignore_ids, ignore_tool_ids, routerd_cmd = _load_hub()
     interval = _coerce_int(os.environ.get("ROUTER_WATCH_INTERVAL"), 1)
     watcher = _ConfigWatcher(
         hub,

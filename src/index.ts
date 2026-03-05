@@ -64,7 +64,9 @@ const INSTALL_PROFILES: Record<InstallTarget, InstallProfile> = {
     defaultConfigPath: "~/.config/opencode/opencode.json",
     mcpField: "mcp",
     wellKnownRemoteMcps: OPENCODE_WELL_KNOWN_REMOTE_MCPS,
-    postWriteHook: reenableOhMyOpencodeMcps,
+    // postWriteHook removed: reenableOhMyOpencodeMcps was overriding user
+    // config by force-re-enabling built-in MCPs the user had disabled.
+    // User config should always be respected.
     postInstallHook: ensureOpencodeGatewayShim,
   },
   claude: {

@@ -133,7 +133,7 @@ class ToolRouter:
             return shlex.split(self._config.routerd_path)
         return ["tool-routerd"]
 
-    def sync_from_mcp(self, server_id: str, mcp_client: Any) -> None:
+    def sync_from_mcp(self, server_id: str, mcp_client: Any, ignore_tool_ids: set[str] | None = None) -> None:
         """Sync MCP tools into the router catalog.
 
         Expected flow:
@@ -149,6 +149,7 @@ class ToolRouter:
             tools=tools or [],
             source_type="mcp",
             source_platform="mcp",
+            ignore_tool_ids=ignore_tool_ids,
         )
 
     def sync_from_tool_definitions(
@@ -158,6 +159,7 @@ class ToolRouter:
         *,
         source_type: str = "mcp",
         source_platform: str = "mcp",
+        ignore_tool_ids: set[str] | None = None,
     ) -> None:
         tool_cards: list[dict[str, Any]] = []
         for tool in tools:
@@ -172,6 +174,8 @@ class ToolRouter:
             if not card:
                 continue
             tool_id = card["toolId"]
+            if ignore_tool_ids and tool_id in ignore_tool_ids:
+                continue
             raw_tool = dict(tool)
             if "name" not in raw_tool:
                 raw_tool["name"] = card["toolName"]

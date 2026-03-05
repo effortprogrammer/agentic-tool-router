@@ -829,6 +829,7 @@ def _load_gateway_hub() -> ToolRouterHub:
         ignore_ids.add(router_id)
     if not ignore_ids:
         ignore_ids.add("router")
+    ignore_tool_ids = _parse_id_list(os.environ.get("ROUTER_IGNORE_TOOL_IDS"))
     routerd_cmd = os.environ.get("ROUTERD")
     return ToolRouterHub.from_opencode_config(
         config_path,
@@ -836,6 +837,7 @@ def _load_gateway_hub() -> ToolRouterHub:
         auto_sync=True,
         include_disabled=include_disabled,
         ignore_ids=sorted(ignore_ids),
+        ignore_tool_ids=sorted(ignore_tool_ids),
     )
 
 

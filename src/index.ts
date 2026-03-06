@@ -503,6 +503,8 @@ function ensureOpencodeGatewayShim(
   createBackup: boolean,
   gatewayRuntime: { command: string[]; env: Record<string, string> },
 ): void {
+  verifyGatewayDeps(gatewayRuntime);
+
   const opencodePath = findCommand("opencode");
   if (!opencodePath) {
     console.warn(
@@ -638,6 +640,30 @@ function buildOpencodeShim(
     "  fi",
     "}",
     "trap cleanup EXIT INT TERM",
+    "# Port checking helpers (lsof -> ss -> netstat fallback for WSL compatibility)",
+    "get_pids_on_port() {",
+    "  local port=$1",
+    "  if command -v lsof >/dev/null 2>&1; then",
+    "    lsof -tiTCP:\"$port\" -sTCP:LISTEN 2>/dev/null || true",
+    "  elif command -v ss >/dev/null 2>&1; then",
+    "    ss -tlnp \"sport = :$port\" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 || true",
+    "  elif command -v netstat >/dev/null 2>&1; then",
+    "    netstat -tlnp 2>/dev/null | awk -v p=\":$port\" '$4 ~ p && /LISTEN/ {split($7,a,\"/\"); if(a[1]+0>0) print a[1]}' || true",
+    "  fi",
+    "}",
+    "is_port_listening() {",
+    "  local port=$1",
+    "  if command -v lsof >/dev/null 2>&1; then",
+    "    lsof -nP -iTCP:\"$port\" -sTCP:LISTEN >/dev/null 2>&1",
+    "  elif command -v ss >/dev/null 2>&1; then",
+    "    ss -tln \"sport = :$port\" 2>/dev/null | grep -q LISTEN",
+    "  elif command -v netstat >/dev/null 2>&1; then",
+    "    netstat -tln 2>/dev/null | grep -q \":$port .*LISTEN\"",
+    "  else",
+    "    # Last resort: bash built-in TCP check",
+    "    (echo >/dev/tcp/127.0.0.1/$port) 2>/dev/null",
+    "  fi",
+    "}",
     "if [[ $# -gt 0 ]]; then",
     "  case \"$1\" in",
     "    attach|serve|web|acp|completion|mcp|run|debug|auth|agent|upgrade|uninstall|models|stats|export|import|github|pr|session|db)",
@@ -658,7 +684,7 @@ function buildOpencodeShim(
     "SERVER_LOG_FILE=${ROUTER_OPENCODE_SERVER_LOG:-${TMPDIR:-/tmp}/mcpflow-opencode-serve.log}",
     "if [[ \"$use_local_upstream\" -eq 1 ]]; then",
     "  # Kill stale local opencode serve (may have old config)",
-    "  existing_serve_pids=$(lsof -tiTCP:4096 -sTCP:LISTEN 2>/dev/null || true)",
+    "  existing_serve_pids=$(get_pids_on_port 4096)",
     "  if [[ -n \"$existing_serve_pids\" ]]; then",
     "    kill $existing_serve_pids >/dev/null 2>&1 || true",
     "    sleep 0.5",
@@ -669,23 +695,50 @@ function buildOpencodeShim(
     "  server_pid=$!",
     "  started_server=1",
     "  upstream_ready=0",
+    "  printf '[mcpflow] Waiting for opencode serve ' >&2",
+    "  _mcpflow_i=0",
     "  for _ in {1..100}; do",
+    "    _mcpflow_i=$((_mcpflow_i + 1))",
     "    if curl -sf --max-time 1 \"$UPSTREAM_URL/experimental/tool/ids\" >/dev/null 2>&1; then",
     "      upstream_ready=1",
     "      break",
     "    fi",
+    "    # Early exit: if the server process died, stop waiting",
+    "    if ! kill -0 \"$server_pid\" 2>/dev/null; then",
+    "      printf ' FAILED\\n' >&2",
+    "      echo \"[mcpflow] ERROR: opencode serve (PID $server_pid) exited unexpectedly.\" >&2",
+    "      if [[ -f \"$SERVER_LOG_FILE\" ]]; then",
+    "        echo \"[mcpflow] Server logs ($SERVER_LOG_FILE):\" >&2",
+    "        tail -n 40 \"$SERVER_LOG_FILE\" >&2 || true",
+    "      fi",
+    "      echo '' >&2",
+    "      echo \"[mcpflow] Troubleshooting:\" >&2",
+    "      echo \"  1. Run: $(basename \"$REAL_OPENCODE\") serve --hostname=127.0.0.1 --port=4096\" >&2",
+    "      echo \"  2. Check port 4096: ss -tlnp 'sport = :4096' OR lsof -iTCP:4096\" >&2",
+    "      echo \"  3. Full logs: cat $SERVER_LOG_FILE\" >&2",
+    "      exit 1",
+    "    fi",
+    "    if [ $((_mcpflow_i % 10)) -eq 0 ]; then printf '.' >&2; fi",
     "    sleep 0.1",
     "  done",
     "  if [[ \"$upstream_ready\" -ne 1 ]]; then",
-    "    echo \"[mcpflow] Failed to start OpenCode upstream at $UPSTREAM_URL.\" >&2",
+    "    printf ' TIMEOUT\\n' >&2",
+    "    echo \"[mcpflow] ERROR: opencode serve did not become ready within 10s at $UPSTREAM_URL\" >&2",
+    "    echo \"[mcpflow] The server process is running (PID $server_pid) but not responding.\" >&2",
     "    if [[ -f \"$SERVER_LOG_FILE\" ]]; then",
-    "      echo \"[mcpflow] Last OpenCode serve logs:\" >&2",
+    "      echo \"[mcpflow] Server logs ($SERVER_LOG_FILE):\" >&2",
     "      tail -n 40 \"$SERVER_LOG_FILE\" >&2 || true",
     "    fi",
+    "    echo '' >&2",
+    "    echo \"[mcpflow] Troubleshooting:\" >&2",
+    "    echo \"  1. Run: $(basename \"$REAL_OPENCODE\") serve --hostname=127.0.0.1 --port=4096\" >&2",
+    "    echo \"  2. Check port 4096: ss -tlnp 'sport = :4096' OR lsof -iTCP:4096\" >&2",
+    "    echo \"  3. Full logs: cat $SERVER_LOG_FILE\" >&2",
     "    exit 1",
     "  fi",
+    "  printf ' ready\\n' >&2",
     "fi",
-    "existing_gateway_pids=$(lsof -tiTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN 2>/dev/null || true)",
+    "existing_gateway_pids=$(get_pids_on_port \"$GATEWAY_PORT\")",
     "if [[ -n \"$existing_gateway_pids\" ]]; then",
     "  kill $existing_gateway_pids >/dev/null 2>&1 || true",
     "  sleep 0.1",
@@ -695,21 +748,50 @@ function buildOpencodeShim(
     "gateway_pid=$!",
     "started_gateway=1",
     "gateway_ready=0",
+    "printf '[mcpflow] Waiting for gateway ' >&2",
+    "_mcpflow_i=0",
     "for _ in {1..80}; do",
-    "  if lsof -nP -iTCP:\"$GATEWAY_PORT\" -sTCP:LISTEN >/dev/null 2>&1; then",
+    "  _mcpflow_i=$((_mcpflow_i + 1))",
+    "  if is_port_listening \"$GATEWAY_PORT\"; then",
     "    gateway_ready=1",
     "    break",
     "  fi",
+    "  # Early exit: if the gateway process died, stop waiting",
+    "  if ! kill -0 \"$gateway_pid\" 2>/dev/null; then",
+    "    printf ' FAILED\\n' >&2",
+    "    echo \"[mcpflow] ERROR: gateway process (PID $gateway_pid) exited unexpectedly.\" >&2",
+    "    if [[ -f \"$GATEWAY_LOG_FILE\" ]]; then",
+    "      echo \"[mcpflow] Gateway logs ($GATEWAY_LOG_FILE):\" >&2",
+    "      tail -n 40 \"$GATEWAY_LOG_FILE\" >&2 || true",
+    "    fi",
+    "    echo '' >&2",
+    "    echo \"[mcpflow] Troubleshooting:\" >&2",
+    "    echo \"  1. Check Python deps: python3 -c 'import httpx; import yaml'\" >&2",
+    "    echo \"  2. Install if missing: pip3 install httpx pyyaml\" >&2",
+    "    echo \"  3. Check port $GATEWAY_PORT: ss -tlnp 'sport = :$GATEWAY_PORT' OR lsof -iTCP:$GATEWAY_PORT\" >&2",
+    "    echo \"  4. Full logs: cat $GATEWAY_LOG_FILE\" >&2",
+    "    exit 1",
+    "  fi",
+    "  if [ $((_mcpflow_i % 10)) -eq 0 ]; then printf '.' >&2; fi",
     "  sleep 0.05",
     "done",
     "if [[ \"$gateway_ready\" -ne 1 ]]; then",
-    "  echo \"[mcpflow] Failed to start gateway on ${GATEWAY_HOST}:${GATEWAY_PORT}.\" >&2",
+    "  printf ' TIMEOUT\\n' >&2",
+    "  echo \"[mcpflow] ERROR: gateway did not become ready within 4s on port $GATEWAY_PORT\" >&2",
+    "  echo \"[mcpflow] The gateway process is running (PID $gateway_pid) but not listening.\" >&2",
     "  if [[ -f \"$GATEWAY_LOG_FILE\" ]]; then",
-    "    echo \"[mcpflow] Last gateway logs:\" >&2",
+    "    echo \"[mcpflow] Gateway logs ($GATEWAY_LOG_FILE):\" >&2",
     "    tail -n 40 \"$GATEWAY_LOG_FILE\" >&2 || true",
     "  fi",
+    "  echo '' >&2",
+    "  echo \"[mcpflow] Troubleshooting:\" >&2",
+    "  echo \"  1. Check Python deps: python3 -c 'import httpx; import yaml'\" >&2",
+    "  echo \"  2. Install if missing: pip3 install httpx pyyaml\" >&2",
+    "  echo \"  3. Check port $GATEWAY_PORT: ss -tlnp 'sport = :$GATEWAY_PORT' OR lsof -iTCP:$GATEWAY_PORT\" >&2",
+    "  echo \"  4. Full logs: cat $GATEWAY_LOG_FILE\" >&2",
     "  exit 1",
     "fi",
+    "printf ' ready\\n' >&2",
     "\"$REAL_OPENCODE\" attach \"http://${GATEWAY_HOST}:${GATEWAY_PORT}\" \"$@\"",
     "",
   ].join("\n");
@@ -958,6 +1040,45 @@ function canImportAll(
     env: { ...process.env, ...env },
   });
   return r.status === 0;
+}
+
+function verifyGatewayDeps(
+  gatewayRuntime: { command: string[]; env: Record<string, string> },
+): void {
+  const cmd = gatewayRuntime.command;
+  // uv handles deps automatically via --with flags — skip check
+  if (cmd[0] === "uv" || cmd[0]?.endsWith("/uv")) return;
+
+  const pythonBin = cmd[0];
+  if (!pythonBin) return;
+
+  // Check if the Python binary itself is reachable
+  const pythonCheck = spawnSync(pythonBin, ["--version"], { stdio: "pipe" });
+  if (pythonCheck.status !== 0) {
+    console.error(
+      `[mcpflow] ERROR: Python not found at '${pythonBin}'.`,
+    );
+    console.error(
+      "[mcpflow] Install Python 3.10+ or uv (https://docs.astral.sh/uv/).",
+    );
+    process.exit(1);
+  }
+
+  // Verify required packages can be imported
+  if (!canImportAll(pythonBin, REQUIRED_IMPORTS, gatewayRuntime.env)) {
+    const pkgList = REQUIRED_PACKAGES.join(" ");
+    console.error(
+      `[mcpflow] ERROR: Python (${pythonBin}) cannot import required packages: ${REQUIRED_IMPORTS.join(", ")}`,
+    );
+    console.error("[mcpflow] Install them with one of:");
+    console.error(`  pip install ${pkgList}`);
+    console.error(`  pip3 install ${pkgList}`);
+    console.error(`  python3 -m pip install ${pkgList}`);
+    console.error(
+      "[mcpflow] Or install uv (https://docs.astral.sh/uv/) for automatic dependency management.",
+    );
+    process.exit(1);
+  }
 }
 
 function ensureManagedGatewayPython(

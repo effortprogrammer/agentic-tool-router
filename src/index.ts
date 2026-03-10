@@ -514,8 +514,16 @@ function ensureOpencodeGatewayShim(
   }
 
   let stat: fs.Stats;
+  let isSymlink = false;
+  let symlinkTarget: string | null = null;
   try {
-    stat = fs.statSync(opencodePath);
+    stat = fs.lstatSync(opencodePath);
+    // Handle symlinks (common with npm global installs)
+    if (stat.isSymbolicLink()) {
+      isSymlink = true;
+      symlinkTarget = fs.realpathSync(opencodePath);
+      stat = fs.statSync(symlinkTarget);
+    }
   } catch {
     console.warn(
       `[mcpflow] Could not inspect ${opencodePath}; skipping automatic gateway launcher shim.`,
@@ -530,11 +538,17 @@ function ensureOpencodeGatewayShim(
     return;
   }
 
-  const existingContent = safeReadText(opencodePath);
+  // For symlinks, read the target content to check for managed shim
+  const contentPath = isSymlink ? symlinkTarget! : opencodePath;
+  const existingContent = safeReadText(contentPath);
   const hasManagedShim =
     existingContent !== null && existingContent.includes(OPENCODE_SHIM_MARKER);
 
-  const realBinaryPath = `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
+  // For symlinks, use the symlink target as the real binary path
+  const realBinaryPath = isSymlink
+    ? symlinkTarget!
+    : `${opencodePath}${OPENCODE_REAL_SUFFIX}`;
+
   if (hasManagedShim) {
     if (!fs.existsSync(realBinaryPath)) {
       const launcherBackupPath = `${opencodePath}.bak`;
@@ -550,6 +564,17 @@ function ensureOpencodeGatewayShim(
         return;
       }
     }
+  } else if (isSymlink) {
+    // For symlinks: backup the symlink itself, then remove it
+    // The real binary stays at symlinkTarget
+    if (createBackup) {
+      // Save symlink target path for potential restoration
+      fs.writeFileSync(`${opencodePath}.symlink.bak`, symlinkTarget!, "utf-8");
+    }
+    fs.unlinkSync(opencodePath);
+    console.log(
+      `[mcpflow] Replaced symlink at ${opencodePath} (was pointing to ${symlinkTarget}).`,
+    );
   } else {
     if (createBackup) {
       fs.copyFileSync(opencodePath, `${opencodePath}.bak`);
@@ -562,12 +587,15 @@ function ensureOpencodeGatewayShim(
   }
 
   // Re-sign the binary after rename/copy so macOS doesn't SIGKILL it.
-  try {
-    spawnSync("codesign", ["--force", "--sign", "-", realBinaryPath], {
-      stdio: "pipe",
-    });
-  } catch {
-    // codesign may not exist on non-macOS; ignore.
+  // Skip for symlinks - the target binary is already signed by npm/package manager.
+  if (!isSymlink) {
+    try {
+      spawnSync("codesign", ["--force", "--sign", "-", realBinaryPath], {
+        stdio: "pipe",
+      });
+    } catch {
+      // codesign may not exist on non-macOS; ignore.
+    }
   }
 
   const shim = buildOpencodeShim(realBinaryPath, gatewayRuntime);

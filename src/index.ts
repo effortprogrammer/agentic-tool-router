@@ -36,6 +36,29 @@ type InstallProfile = JsonInstallProfile | UnsupportedInstallProfile;
 const GATEWAY_MODULE = "mcp_tool_router.opencode_gateway_server";
 const REQUIRED_PACKAGES = ["httpx", "pyyaml"];
 const REQUIRED_IMPORTS = ["httpx", "yaml"];
+const OPENCODE_BYPASS_SUBCOMMANDS = [
+  "attach",
+  "serve",
+  "web",
+  "acp",
+  "completion",
+  "mcp",
+  "run",
+  "debug",
+  "auth",
+  "agent",
+  "upgrade",
+  "uninstall",
+  "models",
+  "stats",
+  "export",
+  "import",
+  "github",
+  "pr",
+  "session",
+  "db",
+] as const;
+const OPENCODE_BYPASS_FLAGS = ["-h", "--help", "-v", "--version"] as const;
 
 const OPENCODE_WELL_KNOWN_REMOTE_MCPS: Record<string, JsonObject> = {
   context7: {
@@ -615,7 +638,23 @@ function safeReadText(filePath: string): string | null {
   }
 }
 
-function buildOpencodeShim(
+export function shouldBypassOpencodeShim(firstArg: string | undefined): boolean {
+  if (!firstArg) {
+    return false;
+  }
+  return (
+    OPENCODE_BYPASS_SUBCOMMANDS.includes(
+      firstArg as (typeof OPENCODE_BYPASS_SUBCOMMANDS)[number],
+    ) ||
+    OPENCODE_BYPASS_FLAGS.includes(
+      firstArg as (typeof OPENCODE_BYPASS_FLAGS)[number],
+    ) ||
+    firstArg === "help" ||
+    firstArg === "version"
+  );
+}
+
+export function buildOpencodeShim(
   realBinaryPath: string,
   gatewayRuntime: { command: string[]; env: Record<string, string> },
 ): string {
@@ -631,6 +670,8 @@ function buildOpencodeShim(
     gatewayEnvParts.length > 0
       ? `env ${gatewayEnvParts.join(" ")} ${gatewayCommandParts.join(" ")}`
       : gatewayCommandParts.join(" ");
+  const bypassSubcommandCase = [...OPENCODE_BYPASS_SUBCOMMANDS].join("|");
+  const bypassFlagCase = [...OPENCODE_BYPASS_FLAGS, "help", "version"].join("|");
   return [
     "#!/usr/bin/env bash",
     marker,
@@ -694,10 +735,10 @@ function buildOpencodeShim(
     "}",
     "if [[ $# -gt 0 ]]; then",
     "  case \"$1\" in",
-    "    attach|serve|web|acp|completion|mcp|run|debug|auth|agent|upgrade|uninstall|models|stats|export|import|github|pr|session|db)",
+    `    ${bypassSubcommandCase})`,
     "      exec \"$REAL_OPENCODE\" \"$@\"",
     "      ;;",
-    "    -h|--help|-v|--version|--print-logs|--log-level|--port|--hostname|--mdns|--mdns-domain|--cors|-m|--model|-c|--continue|-s|--session|--fork|--prompt|--agent)",
+    `    ${bypassFlagCase})`,
     "      exec \"$REAL_OPENCODE\" \"$@\"",
     "      ;;",
     "    *)",
@@ -1271,4 +1312,14 @@ function printHelp(): void {
   );
 }
 
-main();
+function isMainModule(): boolean {
+  const entryPath = process.argv[1];
+  if (!entryPath) {
+    return false;
+  }
+  return path.resolve(entryPath) === fileURLToPath(import.meta.url);
+}
+
+if (isMainModule()) {
+  main();
+}

@@ -17,6 +17,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from .hub import ToolRouterHub, _resolve_opencode_server_url
+from .jsonc import default_opencode_config_path
 
 
 def _setup_logging() -> logging.Logger:
@@ -815,7 +816,7 @@ def _first(values: list[str] | None) -> str | None:
 
 
 def _load_gateway_hub() -> ToolRouterHub:
-    config_path = os.environ.get("OPENCODE_CONFIG", "~/.config/opencode/opencode.json")
+    config_path = os.environ.get("OPENCODE_CONFIG", default_opencode_config_path())
     include_disabled = os.environ.get(
         "ROUTER_INCLUDE_DISABLED", "true"
     ).lower() not in {

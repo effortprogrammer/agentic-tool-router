@@ -160,7 +160,11 @@ function installTarget(target: InstallTarget, args: string[]): void {
   }
 
   const options = parseInstallArgs(args);
-  const configPath = expandHome(options.config || process.env[profile.envVar] || profile.defaultConfigPath);
+  const configPath = resolveProfileConfigPath(
+    profile,
+    options.config,
+    process.env[profile.envVar],
+  );
   const payload = loadConfig(configPath);
   const mcp = ensureMcpField(payload, profile.mcpField, profile.displayName);
 
@@ -240,8 +244,10 @@ function uninstallTarget(target: InstallTarget, args: string[]): void {
   }
 
   const options = parseUninstallArgs(args);
-  const configPath = expandHome(
-    options.config || process.env[profile.envVar] || profile.defaultConfigPath,
+  const configPath = resolveProfileConfigPath(
+    profile,
+    options.config,
+    process.env[profile.envVar],
   );
   const opencodePath = findCommand("opencode");
   const opencodeBackupPath = opencodePath ? `${opencodePath}.bak` : null;
@@ -430,7 +436,7 @@ function loadConfig(configPath: string): JsonObject {
     return {};
   }
   const raw = fs.readFileSync(configPath, "utf-8");
-  const payload = JSON.parse(raw);
+  const payload = parseJsonc(raw);
   if (
     typeof payload !== "object" ||
     payload === null ||
@@ -472,6 +478,155 @@ function writeConfig(
     fs.copyFileSync(configPath, `${configPath}.bak`);
   }
   fs.writeFileSync(configPath, JSON.stringify(payload, null, 2));
+}
+
+function resolveProfileConfigPath(
+  profile: JsonInstallProfile,
+  explicitPath: string | null,
+  envPath: string | undefined,
+): string {
+  if (explicitPath) {
+    return expandHome(explicitPath);
+  }
+  if (envPath) {
+    return expandHome(envPath);
+  }
+  if (profile.target === "opencode") {
+    return resolveOpenCodeDefaultConfigPath(profile.defaultConfigPath);
+  }
+  return expandHome(profile.defaultConfigPath);
+}
+
+function resolveOpenCodeDefaultConfigPath(defaultPath: string): string {
+  const expandedDefault = expandHome(defaultPath);
+  const jsoncPath = expandedDefault.replace(/\.json$/u, ".jsonc");
+  if (fs.existsSync(jsoncPath)) {
+    return jsoncPath;
+  }
+  return expandedDefault;
+}
+
+function parseJsonc(raw: string): unknown {
+  const withoutBom = raw.replace(/^\uFEFF/u, "");
+  const withoutComments = stripJsonComments(withoutBom);
+  const normalized = stripTrailingCommas(withoutComments);
+  return JSON.parse(normalized);
+}
+
+function stripJsonComments(raw: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+    const next = raw[i + 1];
+
+    if (inLineComment) {
+      if (char === "\n") {
+        inLineComment = false;
+        result += char;
+      } else {
+        result += " ";
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        result += "  ";
+        i += 1;
+      } else {
+        result += char === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      result += char;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      result += "  ";
+      i += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      result += "  ";
+      i += 1;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function stripTrailingCommas(raw: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+
+    if (inString) {
+      result += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      result += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let j = i + 1;
+      while (j < raw.length) {
+        const next = raw[j];
+        if (!next || !/\s/u.test(next)) {
+          break;
+        }
+        j += 1;
+      }
+      if (raw[j] === "}" || raw[j] === "]") {
+        continue;
+      }
+    }
+
+    result += char;
+  }
+
+  return result;
 }
 
 const OH_MY_OPENCODE_BUILTIN_MCPS = ["context7", "grep_app", "websearch"];
@@ -1288,7 +1443,7 @@ function printHelp(): void {
       "mcpflow-router <target> <install|uninstall> [options]",
       "",
       "Targets:",
-      "  opencode   OpenCode JSON config (~/.config/opencode/opencode.json)",
+      "  opencode   OpenCode JSON/JSONC config (~/.config/opencode/opencode.json or opencode.jsonc)",
       "  claude     Claude Code JSON config (~/.claude.json)",
       "  codex      Reserved target (TOML installer not yet enabled)",
       "  openclaw   OpenClaw JSON config (~/.config/openclaw/openclaw.json)",
@@ -1302,7 +1457,7 @@ function printHelp(): void {
       "  --dry-run                 Print changes without writing",
       "",
       "Uninstall options (opencode):",
-      "  --config <path>           Override OpenCode config path",
+      "  --config <path>           Override OpenCode config path (.json or .jsonc)",
       "  --keep-backups            Keep .bak/.mcpflow-real artifacts after restore",
       "  --dry-run                 Print actions without writing",
       "",

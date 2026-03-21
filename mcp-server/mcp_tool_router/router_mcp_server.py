@@ -9,6 +9,7 @@ import time
 from typing import Any, Iterable
 
 from .hub import ToolRouterHub
+from .jsonc import default_opencode_config_path
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mcp-tool-router"
@@ -360,7 +361,7 @@ def _parse_id_list(value: str | None) -> set[str]:
 
 
 def _load_hub() -> tuple[ToolRouterHub, str, bool, list[str], str]:
-    config_path = os.environ.get("OPENCODE_CONFIG", "~/.config/opencode/opencode.json")
+    config_path = os.environ.get("OPENCODE_CONFIG", default_opencode_config_path())
     include_disabled = os.environ.get(
         "ROUTER_INCLUDE_DISABLED", "true"
     ).lower() not in {"0", "false", "no"}

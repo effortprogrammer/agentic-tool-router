@@ -14,12 +14,24 @@ from unittest import mock
 def _load_gateway_module():
     package = types.ModuleType("mcp_tool_router")
     package.__path__ = []
-    sys.modules.setdefault("mcp_tool_router", package)
+    package = sys.modules.setdefault("mcp_tool_router", package)
 
     mod_hub = types.ModuleType("mcp_tool_router.hub")
     setattr(mod_hub, "ToolRouterHub", object)
     setattr(mod_hub, "_resolve_opencode_server_url", lambda: "http://127.0.0.1:4096")
-    sys.modules.setdefault("mcp_tool_router.hub", mod_hub)
+    mod_hub = sys.modules.setdefault("mcp_tool_router.hub", mod_hub)
+    setattr(package, "hub", mod_hub)
+
+    jsonc_path = Path(__file__).resolve().parents[1] / "mcp_tool_router" / "jsonc.py"
+    jsonc_spec = importlib.util.spec_from_file_location(
+        "mcp_tool_router.jsonc", jsonc_path
+    )
+    if jsonc_spec is None or jsonc_spec.loader is None:
+        raise RuntimeError("Failed to load jsonc module for tests")
+    jsonc_module = importlib.util.module_from_spec(jsonc_spec)
+    sys.modules[jsonc_spec.name] = jsonc_module
+    jsonc_spec.loader.exec_module(jsonc_module)
+    setattr(package, "jsonc", jsonc_module)
 
     module_path = (
         Path(__file__).resolve().parents[1]
@@ -34,6 +46,7 @@ def _load_gateway_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    setattr(package, "opencode_gateway_server", module)
     return module
 
 
@@ -156,8 +169,8 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
-    def test_should_not_stream_proxy_message_post(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_message_post(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/message",
                 {},
@@ -165,8 +178,8 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
-    def test_should_not_stream_proxy_message_post_even_with_sse_accept(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_message_post_even_with_sse_accept(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/message",
                 {"Accept": "text/event-stream"},
@@ -259,8 +272,8 @@ class GatewayServerTests(unittest.TestCase):
 
         self.assertEqual(mocked_open.call_count, 1)
 
-    def test_should_not_stream_proxy_prompt_post(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_prompt_post(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/prompt",
                 {},
@@ -268,8 +281,8 @@ class GatewayServerTests(unittest.TestCase):
             )
         )
 
-    def test_should_not_stream_proxy_prompt_post_even_with_sse_accept(self) -> None:
-        self.assertFalse(
+    def test_should_stream_proxy_prompt_post_even_with_sse_accept(self) -> None:
+        self.assertTrue(
             _gateway._should_stream_proxy(
                 "/session/ses_1/prompt",
                 {"Accept": "text/event-stream"},

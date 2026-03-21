@@ -8,6 +8,8 @@ from typing import Any, Iterable
 
 import yaml
 
+from .jsonc import load_jsonc_file
+
 
 @dataclass
 class ServerSpec:
@@ -44,8 +46,7 @@ class ServerRegistry:
         ignore_ids: Iterable[str] | None = None,
     ) -> "ServerRegistry":
         expanded = os.path.expanduser(path)
-        with open(expanded, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = load_jsonc_file(expanded)
         servers = _parse_opencode_payload(
             payload,
             include_disabled=include_disabled,

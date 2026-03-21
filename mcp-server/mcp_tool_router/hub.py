@@ -13,6 +13,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 from typing import Any, Iterable
 
+from .jsonc import load_jsonc_file
 from .mcp_http import HttpMcpClient
 from .mcp_stdio import StdioMcpClient
 from .registry import ServerRegistry, ServerSpec
@@ -363,8 +364,7 @@ def _load_opencode_host_tools(
         return {}, {}
 
     try:
-        with open(expanded, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = load_jsonc_file(expanded)
     except (OSError, json.JSONDecodeError):
         return {}, {}
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
@@ -49,7 +50,13 @@ function resolveConfigPath(): string {
   }
   const base =
     process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(base, "opencode/opencode.json");
+  const jsonPath = path.join(base, "opencode/opencode.json");
+  const jsoncPath = jsonPath.replace(/\.json$/u, ".jsonc");
+  return exists(jsoncPath) ? jsoncPath : jsonPath;
+}
+
+function exists(filePath: string): boolean {
+  return fs.existsSync(filePath);
 }
 
 main();

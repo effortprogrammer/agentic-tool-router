@@ -13,7 +13,18 @@ from unittest import mock
 def _load_hub_module():
     package = types.ModuleType("mcp_tool_router")
     package.__path__ = []
-    sys.modules.setdefault("mcp_tool_router", package)
+    package = sys.modules.setdefault("mcp_tool_router", package)
+
+    jsonc_path = Path(__file__).resolve().parents[1] / "mcp_tool_router" / "jsonc.py"
+    jsonc_spec = importlib.util.spec_from_file_location(
+        "mcp_tool_router.jsonc", jsonc_path
+    )
+    if jsonc_spec is None or jsonc_spec.loader is None:
+        raise RuntimeError("Failed to load jsonc module for tests")
+    jsonc_module = importlib.util.module_from_spec(jsonc_spec)
+    sys.modules[jsonc_spec.name] = jsonc_module
+    jsonc_spec.loader.exec_module(jsonc_module)
+    setattr(package, "jsonc", jsonc_module)
 
     mod_http = types.ModuleType("mcp_tool_router.mcp_http")
     setattr(mod_http, "HttpMcpClient", object)
@@ -39,6 +50,7 @@ def _load_hub_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    setattr(package, "hub", module)
     return module
 
 
@@ -96,6 +108,31 @@ class HostToolsConfigTests(unittest.TestCase):
             self.assertEqual(definitions["opencode"][0]["name"], "project_search")
             self.assertNotIn("disabled_tool", host_tools["opencode"])
             self.assertIn("default_provider_tool", host_tools["opencode"])
+
+    def test_load_opencode_host_tools_from_jsonc(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "opencode.jsonc"
+            p.write_text(
+                """
+                {
+                  // host tools config in jsonc
+                  "routerHostTools": [
+                    {
+                      "name": "jsonc_tool",
+                      "command": ["python3", "-c", "print('ok')",],
+                      "enabled": true,
+                    },
+                  ],
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            host_tools, definitions = _hub._load_opencode_host_tools(str(p))
+
+            self.assertIn("opencode", host_tools)
+            self.assertIn("jsonc_tool", host_tools["opencode"])
+            self.assertEqual(definitions["opencode"][0]["name"], "jsonc_tool")
 
     def test_load_opencode_native_tools_from_runtime_endpoints(self) -> None:
         with (

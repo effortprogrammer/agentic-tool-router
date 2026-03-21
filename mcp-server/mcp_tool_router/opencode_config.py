@@ -7,6 +7,8 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+from .jsonc import default_opencode_config_path, load_jsonc_file
+
 _WELL_KNOWN_REMOTE_MCPS: dict[str, dict[str, Any]] = {
     "context7": {
         "type": "remote",
@@ -60,7 +62,7 @@ def apply_router_config(
                 entry["enabled"] = True
 
     _write_config(path, payload, create_backup=create_backup)
-    _reenable_oh_my_opencode_mcps(path.parent, create_backup=create_backup)
+    _reenable_oh_my_opencode_mcps(path, create_backup=create_backup)
     return payload
 
 
@@ -73,8 +75,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--config",
-        default="~/.config/opencode/opencode.json",
-        help="Path to opencode.json",
+        default=default_opencode_config_path(),
+        help="Path to opencode.json or opencode.jsonc",
     )
     parser.add_argument(
         "--router-id", default="router", help="Legacy router MCP id to remove"
@@ -135,7 +137,7 @@ def main() -> int:
         return 0
 
     _write_config(path, payload, create_backup=args.create_backup)
-    _reenable_oh_my_opencode_mcps(path.parent, create_backup=args.create_backup)
+    _reenable_oh_my_opencode_mcps(path, create_backup=args.create_backup)
     return 0
 
 
@@ -148,13 +150,12 @@ def _cleanup_router_entry(mcp: dict[str, Any], router_id: str) -> None:
         mcp.pop(router_id, None)
 
 
-def _reenable_oh_my_opencode_mcps(config_dir: Path, *, create_backup: bool) -> None:
+def _reenable_oh_my_opencode_mcps(opencode_path: Path, *, create_backup: bool) -> None:
     changed = False
-
-    opencode_path = config_dir / "opencode.json"
+    config_dir = opencode_path.parent
     if opencode_path.exists():
         try:
-            opencode_raw = json.loads(opencode_path.read_text(encoding="utf-8"))
+            opencode_raw = load_jsonc_file(opencode_path)
             if isinstance(opencode_raw, dict):
                 mcp_payload = opencode_raw.get("mcp")
                 if isinstance(mcp_payload, dict):
@@ -218,8 +219,7 @@ def _load_config(config_path: str) -> tuple[dict[str, Any], Path]:
     path = Path(os.path.expanduser(config_path))
     if not path.exists():
         return {}, path
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+    payload = load_jsonc_file(path)
     if not isinstance(payload, dict):
         raise ValueError("OpenCode config must be a JSON object.")
     return payload, path
